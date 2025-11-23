@@ -8,12 +8,12 @@ st.set_page_config(
 )
 
 # ----------------------------
-# 화면 중앙 배치 여백
+# 상단 여백 (중앙 배치용)
 # ----------------------------
 st.markdown("<div style='height:12vh;'></div>", unsafe_allow_html=True)
 
 # ----------------------------
-# 이미지 중앙 배치 (columns 활용)
+# 이미지 중앙 정렬
 # ----------------------------
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
@@ -38,14 +38,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ----------------------------
-# 아래 여백
+# 자동 페이지 이동 (2초 후)
 # ----------------------------
-st.markdown("<div style='height:8vh;'></div>", unsafe_allow_html=True)
-
-# ----------------------------
-# 2초 뒤 자동 이동
-# ----------------------------
-if "redirect" not in st.session_state:
-    st.session_state.redirect = True
+if "start_redirect" not in st.session_state:
+    st.session_state.start_redirect = True
     time.sleep(2)
-    st.page_link("pages/1_user_info2.py", label="", icon="")
+    st.switch_page("1_user_info2")
