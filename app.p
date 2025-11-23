@@ -22,33 +22,33 @@ st.markdown("""
             0% { opacity: 0; transform: translateY(10px); }
             100% { opacity: 1; transform: translateY(0); }
         }
-        .title {
+        h1 {
             text-align: center;
             font-size: 48px;
             font-weight: 900;
-            margin-top: -10px;
+            margin-bottom: -5px;
         }
         .subtitle {
             text-align: center;
             font-size: 20px;
             color: #555;
-            margin-top: -15px;
+            margin-bottom: 25px;
         }
     </style>
 """, unsafe_allow_html=True)
 
 # ----------------------------
-# 히어로 이미지
+# 제목 + 설명 (위)
 # ----------------------------
-st.image("assets/home_fitness.jpg", use_column_width=True)
+st.markdown("""
+    <h1 class="fade-in">🏋️ MoodFit</h1>
+    <p class="subtitle fade-in">감정 기반 개인 맞춤 운동 추천 서비스</p>
+""", unsafe_allow_html=True)
 
 # ----------------------------
-# 타이틀 텍스트
+# 이미지 (아래)
 # ----------------------------
-st.markdown(f"""
-    <h1 class='fade-in title'>🏋️ MoodFit</h1>
-    <p class='fade-in subtitle'>감정 기반 개인 맞춤 운동 추천 서비스</p>
-""", unsafe_allow_html=True)
+st.image("assets/home_fitness.jpg", use_column_width=True)
 
 # ----------------------------
 # 안내 문장
@@ -65,6 +65,3 @@ st.markdown("""
 # ----------------------------
 time.sleep(2)
 st.switch_page("pages/1_user_info2.py")
-
-
-
