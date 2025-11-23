@@ -127,10 +127,12 @@ if st.button("💾 회원 등록 완료", use_container_width=True):
                 updated.to_csv(csv_path, index=False, encoding="utf-8-sig")
                 st.success("🎉 회원 등록이 완료되었습니다!")
                 st.balloons()
+                st.switch_page("pages/2_daily_info2.py")
 
         else:
             # 새 파일 생성
             new_data.to_csv(csv_path, index=False, encoding="utf-8-sig")
             st.success("🎉 회원 등록이 완료되었습니다!")
-             # 기존 저장 코드 실행 후...
+            st.balloons()
             st.switch_page("pages/2_daily_info2.py")
+
