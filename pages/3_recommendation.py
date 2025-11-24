@@ -171,13 +171,16 @@ if st.button("🤖 Top3 추천 받기",use_container_width=True):
     # sheet 저장
     for item in top3:
         ws_reco.append_row([
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             user_name,
-            str(pick_date),
-            item["rank"],
-            item["운동명"],
-            item["이유"]
+            str(pick_date_dt),
+            purpose,
+            top3[0]["운동명"], top3[1]["운동명"], top3[2]["운동명"],
+            top3[0]["이유"], top3[1]["이유"], top3[2]["이유"],
+            target_intensity,
+            weather,
+            place_pref
         ])
+
 
     st.session_state["recommended_workouts"]=[i["운동명"] for i in top3]
 
