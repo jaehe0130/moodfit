@@ -22,7 +22,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Google Sheet 연결
-sh = connect_gsheet("MoodFit_users")
+sh = connect_gsheet("MoodFit")
 ws = sh.worksheet("daily")  # ▶️ daily 시트로 저장
 # (처음 만들면 Sheet 내부에서 manually 시트명 daily 로 만들어두기)
 
