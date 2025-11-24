@@ -495,25 +495,22 @@ if st.button("🤖 Top3 운동 추천 받기", use_container_width=True):
             merged_user_info
         )
 
+    # CSV 저장
     daily_df = save_recommendations(daily_df, user_name, used_date, top3)
+
+    # 세션에 추천 운동 저장
+    st.session_state["recommended_workouts"] = [item["운동명"] for item in top3]
 
     st.markdown("## 🏅 추천 Top3")
     for item in top3:
         st.markdown(f"""
-        <div style="
-            background:#f7f9fc; 
-            border-radius:16px; 
-            padding:18px; 
-            margin-bottom:10px;
-            border:1px solid #e5e7eb;">
+        <div style="background:#f7f9fc; border-radius:16px; padding:18px; margin-bottom:10px; border:1px solid #e5e7eb;">
             <h3 style="margin:0;">#{item['rank']}  {item['운동명']}</h3>
             <p style="margin-top:6px; color:#374151;">
                 {item['이유']}
             </p>
         </div>
         """, unsafe_allow_html=True)
-
-    daily_df.drop(columns=["_date"], inplace=True, errors="ignore")
 
 # =======================================
 # 평가 대시보드 이동 버튼
