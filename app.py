@@ -1,25 +1,18 @@
 import streamlit as st
+import time
 
 st.set_page_config(page_title="MoodFit", page_icon="🏋️", layout="centered")
 
-st.markdown("<div style='height:12vh;'></div>", unsafe_allow_html=True)
+# 이미지
+st.image("assets/home_fitness.jpg", width=350)
 
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    st.image("assets/home_fitness.jpg", width=350)
+# 제목
+st.title("MoodFit")
 
-st.markdown("""
-<h1 style="text-align:center; font-size:42px; font-weight:900; margin-top:15px;">
-🏋️ MoodFit
-</h1>
-""", unsafe_allow_html=True)
+# 2초 대기
+time.sleep(2)
 
-# ---- JS Redirect (2초 뒤 이동)
-st.markdown("""
-<script>
-setTimeout(function() {
-    window.location.href = "/1_user_info2";
-}, 2000);
-</script>
-""", unsafe_allow_html=True)
+# 페이지 이동
+st.switch_page("1_user_info2")
+
 
