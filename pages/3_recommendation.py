@@ -164,34 +164,63 @@ candidates_df=filter_candidates(workouts_df,purpose,target)
 
 st.markdown("---")
 
-if st.button("🤖 Top3 추천 받기",use_container_width=True):
+if st.button("🤖 Top3 추천 받기", use_container_width=True):
     with st.spinner("추천 생성 중..."):
-        top3=llm_rank_top3(candidates_df,user_row,daily_row,weather,temp,city,place_pref,equip_list,merged)
+        top3 = llm_rank_top3(
+            candidates_df,
+            user_row,
+            daily_row,
+            weather,
+            temp,
+            city,
+            place_pref,
+            equip_list,
+            merged
+        )
 
-   # =========================
-# Google Sheet 'recommendation' 시트에 저장
-# =========================
-ws_reco.append_row([
-    user_name,
-    str(pick_date_dt),
-    purpose,
-    top3[0]["운동명"], top3[1]["운동명"], top3[2]["운동명"],
-    top3[0]["이유"], top3[1]["이유"], top3[2]["이유"],
-    target_intensity,
-    weather,
-    place_pref
-])
+    # 추천 결과가 없으면 에러 처리
+    if not top3 or len(top3) < 1:
+        st.error("추천 운동 생성에 실패했습니다. 다시 시도해주세요.")
+        st.stop()
 
+    # =========================
+    # 📌 recommendation 시트에 1줄로 저장
+    # 헤더: 이름 | 날짜 | 운동목적 | 추천운동1 | 추천운동2 | 추천운동3 | 이유1 | 이유2 | 이유3 | 강도 | 날씨 | 장소
+    # =========================
+    ws_reco.append_row([
+        user_name,
+        str(pick_date_dt),
+        purpose,
+        top3[0]["운동명"] if len(top3) > 0 else "",
+        top3[1]["운동명"] if len(top3) > 1 else "",
+        top3[2]["운동명"] if len(top3) > 2 else "",
+        top3[0]["이유"] if len(top3) > 0 else "",
+        top3[1]["이유"] if len(top3) > 1 else "",
+        top3[2]["이유"] if len(top3) > 2 else "",
+        target_intensity,
+        weather,
+        place_pref
+    ])
 
+    # 👉 평가 페이지에서 그대로 쓰려고 세션에 저장
+    st.session_state["recommended_workouts"] = [w["운동명"] for w in top3]
+    st.session_state["selected_user"] = user_name
+    st.session_state["selected_date"] = str(pick_date_dt)
 
-    st.session_state["recommended_workouts"]=[i["운동명"] for i in top3]
+    st.success("🎉 추천 결과가 recommendation 시트에 저장되었습니다!")
 
-    st.success("🎉 recommendation 시트에 저장 완료!")
     st.markdown("## 🏅 추천 Top3")
-
     for item in top3:
-        st.write(f"### #{item['rank']} {item['운동명']}")
-        st.write(item["이유"])
+        st.markdown(f"""
+        <div style="background:#f7f9fc; border-radius:16px; padding:18px; margin-bottom:10px; border:1px solid #e5e7eb;">
+            <h3 style="margin:0;">#{item['rank']}  {item['운동명']}</h3>
+            <p style="margin-top:6px; color:#374151;">
+                {item['이유']}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    if st.button("📊 추천 평가 페이지 이동"):
-        st.switch_page("pages/4_evaluation_dashboard.py")
+    st.markdown("---")
+    if st.button("📊 추천 평가 페이지로 이동", use_container_width=True):
+        st.switch_page("4_evaluation_dashboard")
+
