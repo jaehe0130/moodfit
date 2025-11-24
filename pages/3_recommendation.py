@@ -350,27 +350,25 @@ def llm_rank_top3(candidates_df, user_row, daily_row,
 
 
 # =========================
-# 7) Google Sheets에서 users/daily 로드
+# Google Sheet 'recommendation' 시트에 저장
 # =========================
-sh = connect_gsheet("MoodFit")   # 👉 스프레드시트 이름
-ws_users = sh.worksheet("users")
-ws_daily = sh.worksheet("daily")
-ws_reco = sh.worksheet("recommendation")   # 👉 추천 결과 저장용 시트 (이름 정확히!)
+for item in top3:
+    ws_reco.append_row([
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        user_name,
+        str(pick_date_dt),
+        city,
+        weather,
+        float(temp),
+        purpose,
+        target_intensity,
+        place_pref,
+        ", ".join(equip_list),
+        item["rank"],
+        item["운동명"],
+        item["이유"]
+    ])
 
-users_df = pd.DataFrame(ws_users.get_all_records())
-daily_df = pd.DataFrame(ws_daily.get_all_records())
-workouts_df = load_workouts()
-
-if users_df.empty or daily_df.empty:
-    st.error("❌ users 또는 daily 시트에 데이터가 없습니다. 먼저 회원/컨디션을 입력해주세요.")
-    st.stop()
-
-# 날짜 컬럼을 date 타입으로 변환
-if "날짜" in daily_df.columns:
-    daily_df["날짜"] = pd.to_datetime(daily_df["날짜"], errors="coerce").dt.date
-else:
-    st.error("daily 시트에 '날짜' 컬럼이 필요합니다.")
-    st.stop()
 
 # =========================
 # 8) UI - 도시/사용자/날짜 선택
