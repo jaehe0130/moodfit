@@ -241,7 +241,4 @@ JSON만 출력하세요.
     if st.button("📊 평가하기"):
         st.write("DEBUG: 버튼 눌림!")   # ← 추가
         st.session_state["recommended_workouts"] = [w["exercise_name"] for w in top3]
-        st.session_state["selected_user"] = profile["이름"]
-        st.session_state["selected_date"] = latest_date_str
-        st.write("DEBUG: switch_page 실행 전")   # ← 추가
         st.switch_page("pages/4_evaluation.py")
