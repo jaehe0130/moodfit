@@ -85,7 +85,7 @@ if len(daily_raw) < 2:
     st.error("❌ daily 시트에 데이터가 부족합니다. 최소 1개의 데이터 행이 필요합니다.")
     st.stop()
 
-daily_df = pd.DataFrame(daily_raw[:], columns=daily_raw[0])  # 첫 row는 컬럼 헤더
+daily_df = pd.DataFrame(daily_raw[1:], columns=daily_raw[0])  # 첫 row는 컬럼 헤더
 users_df = pd.DataFrame(ws_users.get_all_records())
 
 # === 날짜 변환 ===
