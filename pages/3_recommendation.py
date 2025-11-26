@@ -21,7 +21,7 @@ st.markdown("""
 WORKOUT_CSV = "workout.csv"
 
 def read_csv(path):
-    for enc in ["utf-8-sig","utf-8","cp949"]:
+    for enc in ["utf-8-sig", "utf-8", "cp949"]:
         try:
             return pd.read_csv(path, encoding=enc)
         except Exception:
@@ -78,7 +78,6 @@ st.info(f"현재날씨: {weather}, {temp:.1f}°C")
 sh = connect_gsheet("MoodFit")
 ws_users = sh.worksheet("users")
 ws_daily = sh.worksheet("daily")
-ws_reco = sh.worksheet("recommendation")
 
 # === RAW 데이터 조회 후 DataFrame 변환 (빈 행 대비 처리) ===
 daily_raw = ws_daily.get_all_values()   # 전체 값 가져오기
@@ -110,11 +109,18 @@ pick_date = st.selectbox("추천 기준 날짜", sorted(user_daily["날짜"].uni
 daily_row = user_daily[user_daily["날짜"] == pick_date].iloc[0]
 pick_date_dt = pick_date  # 그대로 저장
 
+# daily 시트에서 이 행이 몇 번째 row인지 계산 (시트 row 번호)
+mask = (daily_df["이름"] == user_name) & (daily_df["날짜"] == pick_date)
+row_idx = daily_df[mask].index[0]      # 0-based
+sheet_row = row_idx + 2               # 시트는 1행 헤더라 +2
+
+
 # users 시트에서 추가 정보 가져오기
 user_row = users_df[users_df["이름"] == user_name].iloc[0]
 place_pref = user_row.get("운동장소선호", "상관없음")
 equip_raw = user_row.get("보유장비", "")
 equip_list = [s.strip() for s in str(equip_raw).split(",") if s.strip()]
+
 
 # ========================= RULE 기반 후보군 =========================
 purpose = daily_row.get("운동목적", "")
@@ -130,6 +136,7 @@ else:
     candidates = workouts_df.copy()
 
 st.markdown("---")
+
 
 # ========================= 추천 버튼 =========================
 if st.button("🤖 Top3 추천 받기", use_container_width=True):
@@ -180,10 +187,10 @@ JSON만 출력하세요.
         resp = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role":"system","content":system_prompt},
-                {"role":"user","content":json.dumps(rule_candidates, ensure_ascii=False)}
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(rule_candidates, ensure_ascii=False)},
             ],
-            temperature=0.6
+            temperature=0.6,
         )
 
         raw = resp.choices[0].message.content
@@ -198,23 +205,33 @@ JSON만 출력하세요.
         st.error("❌ 추천 생성 실패. 다시 시도하세요.")
         st.stop()
 
-    # Recommendation 시트에 한 줄 저장
-    ws_reco.append_row([
-        user_name,
-        str(pick_date_dt),
-        purpose,
-        top3[0]["운동명"] if len(top3) > 0 else "",
-        top3[1]["운동명"] if len(top3) > 1 else "",
-        top3[2]["운동명"] if len(top3) > 2 else "",
-        top3[0]["이유"] if len(top3) > 0 else "",
-        top3[1]["이유"] if len(top3) > 1 else "",
-        top3[2]["이유"] if len(top3) > 2 else "",
-        target_intensity,
-        weather,
-        place_pref
-    ])
+    # ========================= daily 시트에 추천 결과 저장 =========================
+    # daily 시트 헤더에서 추천 관련 컬럼 위치 찾기
+    headers = daily_raw[0]  # ["이름","날짜","운동목적",..., "추천운동1", ...]
 
-    st.success("🎉 추천 결과 저장 완료!")
+    def col_idx(col_name: str) -> int:
+        """해당 컬럼명이 없으면 에러를 띄우고, 있으면 1-based column index 반환"""
+        if col_name not in headers:
+            st.error(f"❌ daily 시트에 '{col_name}' 컬럼이 없습니다. 헤더에 추가해 주세요.")
+            st.stop()
+        return headers.index(col_name) + 1
+
+    c_w1 = col_idx("추천운동1")
+    c_w2 = col_idx("추천운동2")
+    c_w3 = col_idx("추천운동3")
+    c_r1 = col_idx("추천이유1")
+    c_r2 = col_idx("추천이유2")
+    c_r3 = col_idx("추천이유3")
+
+    # 각 칸에 값 입력
+    ws_daily.update_cell(sheet_row, c_w1, top3[0]["운동명"] if len(top3) > 0 else "")
+    ws_daily.update_cell(sheet_row, c_w2, top3[1]["운동명"] if len(top3) > 1 else "")
+    ws_daily.update_cell(sheet_row, c_w3, top3[2]["운동명"] if len(top3) > 2 else "")
+    ws_daily.update_cell(sheet_row, c_r1, top3[0]["이유"] if len(top3) > 0 else "")
+    ws_daily.update_cell(sheet_row, c_r2, top3[1]["이유"] if len(top3) > 1 else "")
+    ws_daily.update_cell(sheet_row, c_r3, top3[2]["이유"] if len(top3) > 2 else "")
+
+    st.success("🎉 daily 시트에 추천 결과 저장 완료!")
 
     st.markdown("## 🏅 추천 Top3")
     for item in top3:
