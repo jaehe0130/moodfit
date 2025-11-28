@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 import os, re, json, requests
 import pandas as pd
@@ -8,6 +7,16 @@ from openai import OpenAI
 from datetime import datetime, date
 from sheets_auth import connect_gsheet
 
+# Spotify
+try:
+    import spotipy
+    from spotipy.oauth2 import SpotifyClientCredentials
+except ImportError:
+    spotipy = None
+    SpotifyClientCredentials = None
+
+
+# ========================= 기본 UI =========================
 st.set_page_config(page_title="운동 추천", page_icon="🏋️", layout="centered")
 
 st.markdown("""
@@ -18,14 +27,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ========================= WORKOUT CSV =========================
+# ========================= CSV 불러오기 =========================
 WORKOUT_CSV = "workout.csv"
 
 def read_csv(path):
     for enc in ["utf-8-sig", "utf-8", "cp949"]:
         try:
             return pd.read_csv(path, encoding=enc)
-        except Exception:
+        except:
             pass
     st.error("❌ workout.csv 읽기 실패")
     st.stop()
@@ -45,7 +54,7 @@ def load_workouts():
     df["운동목적_list"] = df["운동목적"].apply(split_tags)
     return df
 
-# 전역에서 한 번만 로드
+
 workouts_df = load_workouts()
 
 
@@ -54,44 +63,47 @@ def get_weather(city):
     key = os.getenv("WEATHER_API_KEY")
     if not key:
         return "unknown", 0.0
-
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={key}&lang=kr&units=metric"
     try:
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={key}&lang=kr&units=metric"
         res = requests.get(url).json()
         return res["weather"][0]["main"].lower(), res["main"]["temp"]
-    except Exception:
+    except:
         return "unknown", 0.0
 
 
-# ========================= LLM JSON 파싱 =========================
-def parse_json(text):
-    text = re.sub(r"
-(json)?", "", text).strip("` ")
+# ========================= JSON 파서 =========================
+def parse_json(text: str):
+    if not text:
+        raise ValueError("빈 JSON")
+
+    text = text.strip()
+    text = re.sub(r"^```json", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"```$", "", text).strip()
+    text = re.sub(r"^```", "", text).strip()
+
+    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if m:
+        text = m.group(0)
+
     return json.loads(text)
-# ========================= STREAMLIT UI =========================
+
+
+# ========================= Google Sheets =========================
 city = st.text_input("🌍 도시명", "Seoul")
 weather, temp = get_weather(city)
 st.info(f"현재날씨: {weather}, {temp:.1f}°C")
 
-
-# ========================= LOAD SHEETS =========================
 sh = connect_gsheet("MoodFit")
 ws_users = sh.worksheet("users")
 ws_daily = sh.worksheet("daily")
 
-# === RAW 데이터 조회 후 DataFrame 변환 (빈 행 대비 처리) ===
-daily_raw = ws_daily.get_all_values()   # 전체 값 가져오기
+daily_raw = ws_daily.get_all_values()
 if len(daily_raw) < 2:
-    st.error("❌ daily 시트에 데이터가 부족합니다. 최소 1개의 데이터 행이 필요합니다.")
+    st.error("❌ daily 시트에 데이터가 없습니다.")
     st.stop()
 
-daily_df = pd.DataFrame(daily_raw[1:], columns=daily_raw[0])  # 첫 row는 컬럼 헤더
+daily_df = pd.DataFrame(daily_raw[1:], columns=daily_raw[0])
 users_df = pd.DataFrame(ws_users.get_all_records())
-
-# === 날짜 변환 ===
-if "날짜" not in daily_df.columns:
-    st.error("❌ daily 시트에 '날짜' 헤더가 없습니다. 정확히 '날짜' 로 입력해주세요.")
-    st.stop()
 
 daily_df["날짜"] = pd.to_datetime(daily_df["날짜"], errors="coerce").dt.date
 
@@ -102,43 +114,120 @@ user_name = st.selectbox("오늘 추천 받을 사용자", users_df["이름"].un
 
 user_daily = daily_df[daily_df["이름"] == user_name]
 if user_daily.empty:
-    st.error("❌ 선택한 사용자의 daily 데이터가 없습니다.")
+    st.error("❌ 사용자의 daily 데이터가 없습니다.")
     st.stop()
 
 pick_date = st.selectbox("추천 기준 날짜", sorted(user_daily["날짜"].unique(), reverse=True))
 daily_row = user_daily[user_daily["날짜"] == pick_date].iloc[0]
-pick_date_dt = pick_date  # 그대로 저장
 
-# daily 시트에서 이 행이 몇 번째 row인지 계산 (시트 row 번호)
 mask = (daily_df["이름"] == user_name) & (daily_df["날짜"] == pick_date)
-row_idx = daily_df[mask].index[0]      # 0-based
-sheet_row = row_idx + 2               # 시트는 1행 헤더라 +2
+row_idx = daily_df[mask].index[0]
+sheet_row = row_idx + 2
 
 
-# users 시트에서 추가 정보 가져오기
+# 사용자 정적 정보
 user_row = users_df[users_df["이름"] == user_name].iloc[0]
 place_pref = user_row.get("운동장소선호", "상관없음")
 equip_raw = user_row.get("보유장비", "")
 equip_list = [s.strip() for s in str(equip_raw).split(",") if s.strip()]
 
 
-# ========================= RULE 기반 후보군 =========================
+# ========================= RULE 후보군 =========================
 purpose = daily_row.get("운동목적", "")
-target_intensity = "중강도"  # 기본값 placeholder
+target_intensity = "중강도"
 
 if purpose:
     candidates = workouts_df[workouts_df["운동목적_list"].apply(lambda x: purpose in x)]
     if candidates.empty:
-        st.warning("⚠️ 해당 운동목적에 맞는 운동이 없어 전체 운동에서 추천합니다.")
         candidates = workouts_df.copy()
 else:
-    st.warning("⚠️ daily 시트에 '운동목적' 값이 비어 있습니다. 전체 운동에서 추천합니다.")
     candidates = workouts_df.copy()
 
 st.markdown("---")
 
 
-# ========================= 추천 버튼 =========================
+# ========================= 감정 추출 함수 =========================
+def get_emotion_from_daily(row):
+    for col in ["감정", "대표감정", "주요감정", "감정_리스트"]:
+        if col in row and pd.notna(row[col]):
+            return str(row[col]).split(",")[0].strip()
+    return ""
+
+
+# ========================= Spotify 클라이언트 =========================
+def get_spotify_client():
+    if spotipy is None:
+        return None
+    cid = os.getenv("SPOTIFY_CLIENT_ID")
+    csec = os.getenv("SPOTIFY_CLIENT_SECRET")
+    if not cid or not csec:
+        return None
+    auth = SpotifyClientCredentials(client_id=cid, client_secret=csec)
+    return spotipy.Spotify(auth_manager=auth)
+
+
+def search_spotify_playlists(sp, query, market="KR", limit=3):
+    if sp is None:
+        return []
+    try:
+        res = sp.search(q=query, type="playlist", limit=limit, market=market)
+        items = res.get("playlists", {}).get("items", [])
+        return [{
+            "title": it.get("name", ""),
+            "owner": (it.get("owner") or {}).get("display_name", ""),
+            "url": it.get("external_urls", {}).get("spotify", "")
+        } for it in items]
+    except:
+        return []
+
+
+# ========================= LLM 기반 Spotify 검색 키워드 =========================
+def get_playlists_for_top3_with_llm(
+    sp, top3, daily_row, target_intensity, purpose, market="KR"
+):
+    client = None
+    if os.getenv("OPENAI_API_KEY"):
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    emotion = get_emotion_from_daily(daily_row)
+    result = []
+
+    for item in top3:
+        wname = item["운동명"]
+        query = ""
+
+        if client:
+            prompt = {
+                "workout": wname,
+                "emotion": emotion,
+                "purpose": purpose,
+                "intensity": target_intensity,
+                "instruction": "검색용 키워드 한 개만 JSON으로 출력. {\"query\": \"...\"}"
+            }
+            try:
+                resp = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system",
+                         "content": "당신은 운동-음악 큐레이터입니다. JSON만 출력."},
+                        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}
+                    ]
+                )
+                raw = resp.choices[0].message.content
+                query = parse_json(raw).get("query", "")
+            except:
+                pass
+
+        if not query:
+            query = f"{wname} 운동 playlist"
+
+        playlists = search_spotify_playlists(sp, query, market=market)
+        result.append({"운동명": wname, "playlists": playlists})
+
+    return result
+
+
+# ========================= Top3 추천 생성 =========================
 if st.button("🤖 Top3 추천 받기", use_container_width=True):
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -147,40 +236,27 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
         {
             "운동명": r["운동명"],
             "운동목적": r["운동목적"],
-            "운동강도": r.get("운동강도", ""),
+            "운동강도": r.get("운동강도", "")
         }
         for _, r in candidates.iterrows()
     ]
 
-    system_prompt = """
+    system_prompt = f"""
 당신은 운동 추천 전문가입니다.
-사용자의 컨디션, 날씨, 목표 목적을 고려하여 운동 3개를 추천하고 이유를 작성하세요.
-서로 다른 유형의 운동을 선택하세요.
-JSON만 출력하세요.
-[중요 규칙]
-1) Top3는 서로 다른 유형/계열로 다양해야 합니다.
-   - 예: 요가/스트레칭 계열만 2개 이상 포함되면 안 됩니다.
-   - 가능하면 유산소/근력/유연성/균형 등 성격이 다른 운동을 섞어주세요.
-2) 사용자 정적정보(users 시트)를 반드시 고려하세요.
-   - 나이/성별/키/몸무게/활동량/부상 이력/부상 상세 등
-3) 오늘의 동적 상태(daily 시트)를 종합해
-   - 수면시간, 스트레스, 운동가능시간(분), 감정, 운동목적
-   현실적으로 수행 가능한 운동을 우선하세요.
-4) 운동 장소/날씨:
-   - 비/눈이거나 실내 선호면 실내/홈트 중심으로 추천하세요.
-   - 사용자 장소 권장: {place_pref}
-5) 보유 장비:
-   - 사용자가 가진 장비로 가능한 운동을 우선하세요.
-   - 보유장비: {", ".join(equip_list) if equip_list else "없음/미기재"}
-6) JSON 형식 외 텍스트는 절대 출력하지 마세요.
+사용자의 컨디션, 목적, 보유장비, 날씨를 고려하여 서로 다른 계열의 운동 3개를 추천하고 이유를 작성.
+JSON만 출력.
 
-반드시 JSON만 출력합니다.
-형식={
+사용자 운동장소 선호: {place_pref}
+보유장비: {', '.join(equip_list) if equip_list else '없음'}
+
+형식:
+{{
 "top3":[
-{"rank":1,"운동명":"", "이유":""},
-{"rank":2,"운동명":"", "이유":""},
-{"rank":3,"운동명":"", "이유":""}
-]}
+{{"rank":1,"운동명":"","이유":""}},
+{{"rank":2,"운동명":"","이유":""}},
+{{"rank":3,"운동명":"","이유":""}}
+]
+}}
 """
 
     with st.spinner("추천 생성 중..."):
@@ -194,27 +270,16 @@ JSON만 출력하세요.
         )
 
         raw = resp.choices[0].message.content
-        try:
-            top3 = parse_json(raw)["top3"]
-        except Exception as e:
-            st.error(f"❌ JSON 파싱 실패: {e}")
-            st.text(raw)
+        top3 = parse_json(raw)["top3"]
+
+    # ======== Google Sheet 업데이트 ========
+    headers = daily_raw[0]
+
+    def col_idx(name):
+        if name not in headers:
+            st.error(f"❌ daily 시트에 '{name}' 컬럼 없음")
             st.stop()
-
-    if not top3 or len(top3) < 1:
-        st.error("❌ 추천 생성 실패. 다시 시도하세요.")
-        st.stop()
-
-    # ========================= daily 시트에 추천 결과 저장 =========================
-    # daily 시트 헤더에서 추천 관련 컬럼 위치 찾기
-    headers = daily_raw[0]  # ["이름","날짜","운동목적",..., "추천운동1", ...]
-
-    def col_idx(col_name: str) -> int:
-        """해당 컬럼명이 없으면 에러를 띄우고, 있으면 1-based column index 반환"""
-        if col_name not in headers:
-            st.error(f"❌ daily 시트에 '{col_name}' 컬럼이 없습니다. 헤더에 추가해 주세요.")
-            st.stop()
-        return headers.index(col_name) + 1
+        return headers.index(name) + 1
 
     c_w1 = col_idx("추천운동1")
     c_w2 = col_idx("추천운동2")
@@ -223,21 +288,70 @@ JSON만 출력하세요.
     c_r2 = col_idx("추천이유2")
     c_r3 = col_idx("추천이유3")
 
-    # 각 칸에 값 입력
-    ws_daily.update_cell(sheet_row, c_w1, top3[0]["운동명"] if len(top3) > 0 else "")
-    ws_daily.update_cell(sheet_row, c_w2, top3[1]["운동명"] if len(top3) > 1 else "")
-    ws_daily.update_cell(sheet_row, c_w3, top3[2]["운동명"] if len(top3) > 2 else "")
-    ws_daily.update_cell(sheet_row, c_r1, top3[0]["이유"] if len(top3) > 0 else "")
-    ws_daily.update_cell(sheet_row, c_r2, top3[1]["이유"] if len(top3) > 1 else "")
-    ws_daily.update_cell(sheet_row, c_r3, top3[2]["이유"] if len(top3) > 2 else "")
+    ws_daily.update_cell(sheet_row, c_w1, top3[0]["운동명"])
+    ws_daily.update_cell(sheet_row, c_w2, top3[1]["운동명"])
+    ws_daily.update_cell(sheet_row, c_w3, top3[2]["운동명"])
+    ws_daily.update_cell(sheet_row, c_r1, top3[0]["이유"])
+    ws_daily.update_cell(sheet_row, c_r2, top3[1]["이유"])
+    ws_daily.update_cell(sheet_row, c_r3, top3[2]["이유"])
 
-    st.success("🎉 daily 시트에 추천 결과 저장 완료!")
+    st.success("🎉 daily 시트 저장 완료!")
 
+    # ======== 출력 ========
     st.markdown("## 🏅 추천 Top3")
     for item in top3:
         st.write(f"### #{item['rank']} {item['운동명']}")
         st.write(item["이유"])
 
+    # =========================
+    #      ★ Spotify 블록 ★
+    # =========================
+    emotion = get_emotion_from_daily(daily_row)
+    top3_names = [t["운동명"] for t in top3]
+    cache_key = f"{target_intensity}|{purpose}|{emotion}|{'/'.join(top3_names)}"
+
+    if "playlist_cache" not in st.session_state:
+        st.session_state["playlist_cache"] = {}
+
+    if cache_key in st.session_state["playlist_cache"]:
+        workout_playlist_pairs = st.session_state["playlist_cache"][cache_key]
+    else:
+        sp = get_spotify_client()
+        workout_playlist_pairs = get_playlists_for_top3_with_llm(
+            sp, top3, daily_row,
+            target_intensity=target_intensity,
+            purpose=purpose,
+            market="KR"
+        )
+        st.session_state["playlist_cache"][cache_key] = workout_playlist_pairs
+
+    st.markdown("## 🎧 추천 운동별 Spotify 플레이리스트")
+
+    for pair in workout_playlist_pairs:
+        wname = pair["운동명"]
+        pls = pair["playlists"]
+
+        st.markdown(f"### 🏷️ {wname}")
+
+        if not pls:
+            st.info("이 운동에 어울리는 플레이리스트를 찾지 못했어요 😢")
+        else:
+            p = pls[0]
+            st.markdown(f"""
+            <div style="
+                background:#ffffff;
+                border-radius:16px;
+                padding:14px;
+                margin-bottom:8px;
+                border:1px solid #e5e7eb;">
+                <h4 style="margin:0;">🎵 {p['title']}</h4>
+                <p style="margin:4px 0 0 0; color:#6b7280;">
+                    by {p['owner']}
+                </p>
+                <a href="{p['url']}" target="_blank">🔗 Spotify에서 열기</a>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # ========================= 평가 페이지 이동 =========================
     if st.button("📊 평가하기"):
-       
         st.switch_page("pages/4_evaluation.py")
