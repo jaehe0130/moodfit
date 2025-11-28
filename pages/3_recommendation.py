@@ -7,13 +7,28 @@ from openai import OpenAI
 from datetime import datetime, date
 from sheets_auth import connect_gsheet
 
-# Spotify
+# ========================= Spotify import =========================
 try:
     import spotipy
     from spotipy.oauth2 import SpotifyClientCredentials
 except ImportError:
     spotipy = None
     SpotifyClientCredentials = None
+
+
+# ========================= 공통: 시크릿/환경변수 헬퍼 =========================
+def get_secret(key: str, default: str = ""):
+    """
+    Streamlit Cloud(st.secrets)와 로컬 환경변수(os.getenv)를 모두 지원하는 헬퍼.
+    """
+    # 1) st.secrets 우선
+    try:
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    # 2) 없으면 os.getenv
+    return os.getenv(key, default)
 
 
 # ========================= 기본 UI =========================
@@ -25,6 +40,14 @@ st.markdown("""
 오늘의 컨디션 + 날씨 기반 Top3 운동 추천
 </p>
 """, unsafe_allow_html=True)
+
+# 🔍 디버그 패널 (선택사항: 필요 없으면 expander 블록 지우셔도 됩니다)
+with st.expander("🔍 디버그 정보 (키/Spotify 상태 확인)", expanded=False):
+    st.write("spotipy import 성공 여부:", spotipy is not None)
+    st.write("WEATHER_API_KEY 존재 여부:", bool(get_secret("WEATHER_API_KEY")))
+    st.write("OPENAI_API_KEY 존재 여부:", bool(get_secret("OPENAI_API_KEY")))
+    st.write("SPOTIFY_CLIENT_ID 존재 여부:", bool(get_secret("SPOTIFY_CLIENT_ID")))
+    st.write("SPOTIFY_CLIENT_SECRET 존재 여부:", bool(get_secret("SPOTIFY_CLIENT_SECRET")))
 
 
 # ========================= CSV 불러오기 =========================
@@ -60,14 +83,15 @@ workouts_df = load_workouts()
 
 # ========================= 날씨 조회 =========================
 def get_weather(city):
-    key = os.getenv("WEATHER_API_KEY")
+    key = get_secret("WEATHER_API_KEY")
     if not key:
         return "unknown", 0.0
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={key}&lang=kr&units=metric"
         res = requests.get(url).json()
         return res["weather"][0]["main"].lower(), res["main"]["temp"]
-    except:
+    except Exception as e:
+        st.warning(f"⚠️ 날씨 조회 중 오류: {e}")
         return "unknown", 0.0
 
 
@@ -77,10 +101,12 @@ def parse_json(text: str):
         raise ValueError("빈 JSON")
 
     text = text.strip()
+    # ```json, ``` 제거
     text = re.sub(r"^```json", "", text, flags=re.IGNORECASE).strip()
     text = re.sub(r"```$", "", text).strip()
     text = re.sub(r"^```", "", text).strip()
 
+    # 중괄호 블록만 추출
     m = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if m:
         text = m.group(0)
@@ -122,7 +148,7 @@ daily_row = user_daily[user_daily["날짜"] == pick_date].iloc[0]
 
 mask = (daily_df["이름"] == user_name) & (daily_df["날짜"] == pick_date)
 row_idx = daily_df[mask].index[0]
-sheet_row = row_idx + 2
+sheet_row = row_idx + 2  # 헤더 1줄 + 1-based index
 
 
 # 사용자 정적 정보
@@ -134,7 +160,7 @@ equip_list = [s.strip() for s in str(equip_raw).split(",") if s.strip()]
 
 # ========================= RULE 후보군 =========================
 purpose = daily_row.get("운동목적", "")
-target_intensity = "중강도"
+target_intensity = "중강도"  # 기본값
 
 if purpose:
     candidates = workouts_df[workouts_df["운동목적_list"].apply(lambda x: purpose in x)]
@@ -157,13 +183,23 @@ def get_emotion_from_daily(row):
 # ========================= Spotify 클라이언트 =========================
 def get_spotify_client():
     if spotipy is None:
+        st.warning("⚠️ spotipy 가 import 되지 않았습니다. requirements.txt에 'spotipy'를 추가했는지 확인해주세요.")
         return None
-    cid = os.getenv("SPOTIFY_CLIENT_ID")
-    csec = os.getenv("SPOTIFY_CLIENT_SECRET")
+
+    cid = get_secret("SPOTIFY_CLIENT_ID")
+    csec = get_secret("SPOTIFY_CLIENT_SECRET")
+
     if not cid or not csec:
+        st.warning("⚠️ SPOTIFY_CLIENT_ID 또는 SPOTIFY_CLIENT_SECRET 이 설정되지 않았습니다.")
         return None
-    auth = SpotifyClientCredentials(client_id=cid, client_secret=csec)
-    return spotipy.Spotify(auth_manager=auth)
+
+    try:
+        auth = SpotifyClientCredentials(client_id=cid, client_secret=csec)
+        sp = spotipy.Spotify(auth_manager=auth)
+        return sp
+    except Exception as e:
+        st.error(f"❌ Spotify 클라이언트 생성 중 오류: {e}")
+        return None
 
 
 def search_spotify_playlists(sp, query, market="KR", limit=3):
@@ -172,12 +208,15 @@ def search_spotify_playlists(sp, query, market="KR", limit=3):
     try:
         res = sp.search(q=query, type="playlist", limit=limit, market=market)
         items = res.get("playlists", {}).get("items", [])
+        # 디버그: 검색 결과 개수
+        st.write(f"DEBUG - Spotify '{query}' 검색 결과 개수:", len(items))
         return [{
             "title": it.get("name", ""),
             "owner": (it.get("owner") or {}).get("display_name", ""),
             "url": it.get("external_urls", {}).get("spotify", "")
         } for it in items]
-    except:
+    except Exception as e:
+        st.error(f"❌ Spotify 검색 중 오류: {e}")
         return []
 
 
@@ -185,9 +224,14 @@ def search_spotify_playlists(sp, query, market="KR", limit=3):
 def get_playlists_for_top3_with_llm(
     sp, top3, daily_row, target_intensity, purpose, market="KR"
 ):
+    # sp가 None이면 처음부터 빈 리스트 반환
+    if sp is None:
+        return [{"운동명": t["운동명"], "playlists": []} for t in top3]
+
     client = None
-    if os.getenv("OPENAI_API_KEY"):
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    openai_key = get_secret("OPENAI_API_KEY")
+    if openai_key:
+        client = OpenAI(api_key=openai_key)
 
     emotion = get_emotion_from_daily(daily_row)
     result = []
@@ -208,18 +252,28 @@ def get_playlists_for_top3_with_llm(
                 resp = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system",
-                         "content": "당신은 운동-음악 큐레이터입니다. JSON만 출력."},
-                        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}
+                        {
+                            "role": "system",
+                            "content": "당신은 운동-음악 큐레이터입니다. JSON만 출력."
+                        },
+                        {
+                            "role": "user",
+                            "content": json.dumps(prompt, ensure_ascii=False)
+                        }
                     ]
                 )
                 raw = resp.choices[0].message.content
-                query = parse_json(raw).get("query", "")
-            except:
-                pass
+                data = parse_json(raw)
+                query = data.get("query", "")
+            except Exception as e:
+                st.warning(f"⚠️ LLM 키워드 생성 실패({wname}): {e}")
 
+        # 폴백: LLM이 실패하거나 빈 문자열이면 기본 쿼리
         if not query:
-            query = f"{wname} 운동 playlist"
+            query = f"{wname} workout playlist"
+
+        # 디버그: 실제 검색 쿼리 표시
+        st.write(f"DEBUG - Spotify 검색 쿼리({wname}): {query}")
 
         playlists = search_spotify_playlists(sp, query, market=market)
         result.append({"운동명": wname, "playlists": playlists})
@@ -230,7 +284,12 @@ def get_playlists_for_top3_with_llm(
 # ========================= Top3 추천 생성 =========================
 if st.button("🤖 Top3 추천 받기", use_container_width=True):
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    openai_key = get_secret("OPENAI_API_KEY")
+    if not openai_key:
+        st.error("❌ OPENAI_API_KEY가 설정되어 있지 않습니다.")
+        st.stop()
+
+    client = OpenAI(api_key=openai_key)
 
     rule_candidates = [
         {
@@ -248,6 +307,7 @@ JSON만 출력.
 
 사용자 운동장소 선호: {place_pref}
 보유장비: {', '.join(equip_list) if equip_list else '없음'}
+현재 날씨: {weather}, 온도: {temp:.1f}°C
 
 형식:
 {{
@@ -279,7 +339,7 @@ JSON만 출력.
         if name not in headers:
             st.error(f"❌ daily 시트에 '{name}' 컬럼 없음")
             st.stop()
-        return headers.index(name) + 1
+        return headers.index(name) + 1  # 1-based
 
     c_w1 = col_idx("추천운동1")
     c_w2 = col_idx("추천운동2")
@@ -297,15 +357,13 @@ JSON만 출력.
 
     st.success("🎉 daily 시트 저장 완료!")
 
-    # ======== 출력 ========
+    # ======== 추천 결과 출력 ========
     st.markdown("## 🏅 추천 Top3")
     for item in top3:
         st.write(f"### #{item['rank']} {item['운동명']}")
         st.write(item["이유"])
 
-    # =========================
-    #      ★ Spotify 블록 ★
-    # =========================
+    # ========================= ★ Spotify 블록 ★ =========================
     emotion = get_emotion_from_daily(daily_row)
     top3_names = [t["운동명"] for t in top3]
     cache_key = f"{target_intensity}|{purpose}|{emotion}|{'/'.join(top3_names)}"
@@ -317,6 +375,8 @@ JSON만 출력.
         workout_playlist_pairs = st.session_state["playlist_cache"][cache_key]
     else:
         sp = get_spotify_client()
+        st.write("DEBUG - Spotify 클라이언트 생성 성공?:", sp is not None)
+
         workout_playlist_pairs = get_playlists_for_top3_with_llm(
             sp, top3, daily_row,
             target_intensity=target_intensity,
@@ -354,4 +414,7 @@ JSON만 출력.
 
     # ========================= 평가 페이지 이동 =========================
     if st.button("📊 평가하기"):
-        st.switch_page("pages/4_evaluation.py")
+        try:
+            st.switch_page("pages/4_evaluation.py")
+        except Exception:
+            st.info("👉 평가 페이지 파일 경로를 확인해주세요. (예: pages/4_evaluation.py)")
