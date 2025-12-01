@@ -449,4 +449,21 @@ JSON만 출력.
             """, unsafe_allow_html=True)
 
     # ========================= 평가 페이지 이동 =========================
-    if st.button("📊 평가하기"): st.switch_page("pages/evaluation")
+    if st.button("📊 평가하기"):
+
+    st.write("🔍 버튼 눌림: OK")  # 1) 버튼이 눌렸는지 확인
+
+    # 2) 파일이 실제로 존재하는지 확인
+    import os
+    file_path = os.path.join("pages", "4_evaluation.py")
+    st.write("📁 파일 존재 여부:", os.path.exists(file_path))
+
+    # 3) switch_page 실행 전 확인
+    st.write("➡️ switch_page 실행 시도:", "pages/4_evaluation.py")
+
+    try:
+        st.switch_page("pages/4_evaluation.py")
+        st.write("✅ switch_page 실행됨 (이 메시지가 안 뜨면 실행 안 됨)")
+    except Exception as e:
+        st.write("❌ switch_page 에러 발생!")
+        st.write(str(e))
