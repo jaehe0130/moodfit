@@ -450,7 +450,4 @@ JSON만 출력.
 
     # ========================= 평가 페이지 이동 =========================
     if st.button("📊 평가하기"):
-        try:
-            st.switch_page("pages/4_evaluation.py")
-        except Exception:
-            st.info("👉 평가 페이지 파일 경로를 확인해주세요. (예: pages/4_evaluation.py)")
+        st.switch_page("pages/4_evaluation.py")
