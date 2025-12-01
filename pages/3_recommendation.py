@@ -449,5 +449,4 @@ JSON만 출력.
             """, unsafe_allow_html=True)
 
     # ========================= 평가 페이지 이동 =========================
-    if st.button("📊 평가하기"):
-        st.switch_page("pages/4_evaluation.py")
+    if st.button("📊 평가하기"): st.switch_page("pages/evaluation")
