@@ -16,11 +16,11 @@ header = rows[0]
 data = rows[1:]
 
 # 유저 목록 추출
-user_list = sorted(list({row[1] for row in data if row[1]}))
+user_list = sorted(list({row[1] for row in data if len(row) > 1 and row[1]}))
 
 # 날짜 목록 추출 (해당 유저 선택 후 사용)
 def get_dates_for_user(user):
-    return sorted([row[0] for row in data if row[1] == user])
+    return sorted([row[0] for row in data if len(row) > 1 and row[1] == user])
 
 
 # =====================================================
@@ -57,16 +57,24 @@ target_row = None
 rec1 = rec2 = rec3 = ""
 reason1 = reason2 = reason3 = ""
 
-for i, row in enumerate(data, start=1):  # header 제외했으므로 index 1부터
-    if row[0] == selected_date and row[1] == selected_user:
-        target_row = i + 1  # 실제 Google Sheet row 번호
+# data는 header 제외한 부분, 실제 시트 row 번호는 index + 1 (header 때문에 +1)
+for i, row in enumerate(data, start=1):
+    # row 최소 길이 체크
+    if len(row) < 14:
+        continue
 
-        # daily 시트 컬럼 인덱스 (0-based 기준)
-        # 0: 날짜, 1: 이름, ... 10: 추천운동1, 11: 추천운동2, 12: 추천운동3
-        # 13: 추천이유1, 14: 추천이유2, 15: 추천이유3
+    # 0열: 날짜, 1열: 이름
+    if row[0] == selected_date and row[1] == selected_user:
+        target_row = i + 1  # 실제 Google Sheet row 번호 (1-based 기준)
+
+        # 1-based 열 번호 기준:
+        # 11: 추천운동1, 12: 추천운동2, 13: 추천운동3
+        # 14: 추천이유1, 15: 추천이유2, 16: 추천이유3
+        # → 0-based index: 10,11,12 / 13,14,15
         rec1 = row[10]
         rec2 = row[11]
         rec3 = row[12]
+
         reason1 = row[13] if len(row) > 13 else ""
         reason2 = row[14] if len(row) > 14 else ""
         reason3 = row[15] if len(row) > 15 else ""
@@ -76,11 +84,11 @@ if target_row is None:
     st.error("❌ Daily 데이터에서 해당 사용자/날짜 기록을 찾을 수 없습니다.")
     st.stop()
 
-# 운동 이름 + 이유를 같이 관리
+# 운동 이름 + 이유를 함께 관리
 recommended = [
-    (rec1, reason1),
-    (rec2, reason2),
-    (rec3, reason3),
+    {"name": rec1, "reason": reason1},
+    {"name": rec2, "reason": reason2},
+    {"name": rec3, "reason": reason3},
 ]
 
 # 추천운동이 없는 경우 (이름이 하나라도 비어 있으면)
@@ -93,12 +101,15 @@ if not all([rec1, rec2, rec3]):
 # =====================================================
 st.markdown("### 📍 추천받은 운동:")
 
-for name, reason in recommended:
+for item in recommended:
+    name = item["name"]
+    reason = item["reason"]
+
     if reason:
-        # 운동명 + 이유 같이 표시
+        # 운동명 + 이유를 한 줄/두 줄로 예쁘게 표시
         st.markdown(
-            f"- **{name}**  
-            <span style='color:gray;'>이유: {reason}</span>",
+            f"- **{name}**<br>"
+            f"<span style='color:gray;'>이유: {reason}</span>",
             unsafe_allow_html=True
         )
     else:
@@ -111,11 +122,11 @@ st.markdown("---")
 # =====================================================
 st.subheader("📝 추천 운동별 적합도 평가")
 
-# 슬라이더는 운동 이름 기준으로만 평가
-ratings = {
-    name: st.slider(f"'{name}' 운동 적합도 평가", 1, 5, 3)
-    for name, _ in recommended
-}
+# 슬라이더는 운동 이름 기준으로 평가
+ratings = {}
+for item in recommended:
+    name = item["name"]
+    ratings[name] = st.slider(f"'{name}' 운동 적합도 평가", 1, 5, 3)
 
 st.markdown("---")
 
@@ -145,12 +156,12 @@ if st.button("💾 평가 제출하기", use_container_width=True):
 
     ws_eval = sh.worksheet("evaluation")
 
-    # 운동별 평가 저장 (rec1/2/3는 그대로 사용)
+    # 운동별 평가 저장 (evaluation 시트에서 14~16열에 매핑한다고 가정)
     ws_eval.update_cell(target_row, 14, ratings[rec1])
     ws_eval.update_cell(target_row, 15, ratings[rec2])
     ws_eval.update_cell(target_row, 16, ratings[rec3])
 
-    # 시스템 평가 저장
+    # 시스템 평가 저장 (17~26열에 매핑)
     ws_eval.update_cell(target_row, 17, q1)
     ws_eval.update_cell(target_row, 18, q2)
     ws_eval.update_cell(target_row, 19, q3)
