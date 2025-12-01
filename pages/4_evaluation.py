@@ -51,34 +51,58 @@ if selected_date == "선택":
     st.stop()
 
 # =====================================================
-# 3. Daily 시트에서 해당 row 찾기
+# 3. Daily 시트에서 해당 row 찾기 (운동 + 이유 같이 가져오기)
 # =====================================================
 target_row = None
+rec1 = rec2 = rec3 = ""
+reason1 = reason2 = reason3 = ""
+
 for i, row in enumerate(data, start=1):  # header 제외했으므로 index 1부터
     if row[0] == selected_date and row[1] == selected_user:
         target_row = i + 1  # 실제 Google Sheet row 번호
+
+        # daily 시트 컬럼 인덱스 (0-based 기준)
+        # 0: 날짜, 1: 이름, ... 10: 추천운동1, 11: 추천운동2, 12: 추천운동3
+        # 13: 추천이유1, 14: 추천이유2, 15: 추천이유3
         rec1 = row[10]
         rec2 = row[11]
         rec3 = row[12]
+        reason1 = row[13] if len(row) > 13 else ""
+        reason2 = row[14] if len(row) > 14 else ""
+        reason3 = row[15] if len(row) > 15 else ""
         break
 
 if target_row is None:
     st.error("❌ Daily 데이터에서 해당 사용자/날짜 기록을 찾을 수 없습니다.")
     st.stop()
 
-recommended = [rec1, rec2, rec3]
+# 운동 이름 + 이유를 같이 관리
+recommended = [
+    (rec1, reason1),
+    (rec2, reason2),
+    (rec3, reason3),
+]
 
-# 추천운동이 없는 경우
-if not all(recommended):
+# 추천운동이 없는 경우 (이름이 하나라도 비어 있으면)
+if not all([rec1, rec2, rec3]):
     st.warning("⚠ 이 날짜에는 저장된 추천운동이 없습니다.\n추천 페이지에서 먼저 추천을 받아주세요.")
     st.stop()
 
 # =====================================================
-# 4. 추천 운동 표시
+# 4. 추천 운동 + 이유 표시
 # =====================================================
 st.markdown("### 📍 추천받은 운동:")
-for r in recommended:
-    st.markdown(f"- **{r}**")
+
+for name, reason in recommended:
+    if reason:
+        # 운동명 + 이유 같이 표시
+        st.markdown(
+            f"- **{name}**  
+            <span style='color:gray;'>이유: {reason}</span>",
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(f"- **{name}**")
 
 st.markdown("---")
 
@@ -86,9 +110,11 @@ st.markdown("---")
 # 5. 운동별 평가
 # =====================================================
 st.subheader("📝 추천 운동별 적합도 평가")
+
+# 슬라이더는 운동 이름 기준으로만 평가
 ratings = {
-    r: st.slider(f"'{r}' 운동 적합도 평가", 1, 5, 3)
-    for r in recommended
+    name: st.slider(f"'{name}' 운동 적합도 평가", 1, 5, 3)
+    for name, _ in recommended
 }
 
 st.markdown("---")
@@ -119,7 +145,7 @@ if st.button("💾 평가 제출하기", use_container_width=True):
 
     ws_eval = sh.worksheet("evaluation")
 
-    # 운동별 평가 저장
+    # 운동별 평가 저장 (rec1/2/3는 그대로 사용)
     ws_eval.update_cell(target_row, 14, ratings[rec1])
     ws_eval.update_cell(target_row, 15, ratings[rec2])
     ws_eval.update_cell(target_row, 16, ratings[rec3])
@@ -138,4 +164,3 @@ if st.button("💾 평가 제출하기", use_container_width=True):
 
     st.success("🎉 평가가 저장되었습니다! 감사합니다!")
     st.balloons()
-
