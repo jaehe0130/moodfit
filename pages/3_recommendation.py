@@ -22,7 +22,6 @@ def get_secret(key: str, default: str = ""):
     Streamlit Cloud(st.secrets)와 로컬 환경변수(os.getenv)를 모두 지원하는 헬퍼.
     """
     try:
-        # st.secrets에 있으면 우선 사용
         if key in st.secrets:
             return st.secrets[key]
     except Exception:
@@ -40,37 +39,16 @@ st.markdown("""
 </p>
 """, unsafe_allow_html=True)
 
-# 🔍 디버그 패널: st.secrets 구조 / 키 존재 여부 확인
-with st.expander("🔍 디버그 정보 (키/Spotify 상태 확인)", expanded=False):
-    st.write("spotipy import 성공 여부:", spotipy is not None)
-
-    # st.secrets 전체 구조 확인
-    secrets_dict = {}
-    try:
-        secrets_dict = st.secrets.to_dict()
-        st.write("st.secrets 최상위 키들:", list(secrets_dict.keys()))
-        if "spotify" in secrets_dict and isinstance(secrets_dict["spotify"], dict):
-            st.write("spotify 섹션 키들:", list(secrets_dict["spotify"].keys()))
-    except Exception as e:
-        st.write("st.secrets.to_dict() 호출 중 오류:", e)
-
-    # 흔히 쓸 법한 패턴들 존재 여부
-    st.write("플랫 키 WEATHER_API_KEY 존재 여부:", "WEATHER_API_KEY" in secrets_dict)
-    st.write("플랫 키 OPENAI_API_KEY 존재 여부:", "OPENAI_API_KEY" in secrets_dict)
-    st.write("플랫 키 SPOTIFY_CLIENT_ID 존재 여부:", "SPOTIFY_CLIENT_ID" in secrets_dict)
-    st.write("플랫 키 SPOTIFY_CLIENT_SECRET 존재 여부:", "SPOTIFY_CLIENT_SECRET" in secrets_dict)
-    st.write("플랫 키 spotify_client_id 존재 여부:", "spotify_client_id" in secrets_dict)
-    st.write("플랫 키 spotify_client_secret 존재 여부:", "spotify_client_secret" in secrets_dict)
-
 
 # ========================= CSV 불러오기 =========================
 WORKOUT_CSV = "workout.csv"
+
 
 def read_csv(path):
     for enc in ["utf-8-sig", "utf-8", "cp949"]:
         try:
             return pd.read_csv(path, encoding=enc)
-        except:
+        except Exception:
             pass
     st.error("❌ workout.csv 읽기 실패")
     st.stop()
@@ -103,8 +81,7 @@ def get_weather(city):
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={key}&lang=kr&units=metric"
         res = requests.get(url).json()
         return res["weather"][0]["main"].lower(), res["main"]["temp"]
-    except Exception as e:
-        st.warning(f"⚠️ 날씨 조회 중 오류: {e}")
+    except Exception:
         return "unknown", 0.0
 
 
@@ -196,65 +173,35 @@ def get_emotion_from_daily(row):
 # ========================= Spotify 클라이언트 =========================
 def get_spotify_client():
     """
-    여러 가지 secrets 패턴을 자동으로 탐색해서 Spotify 키를 찾는 함수.
-    - 플랫 키: SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET
-    - 플랫 소문자 키: spotify_client_id / spotify_client_secret
-    - 섹션: [spotify] 아래 client_id / clientSecret / key 등 이름에 'id', 'secret'이 들어간 것
-    - 마지막 폴백: 환경변수 SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET
+    Streamlit secrets 의 [spotify] 섹션과 환경변수를 이용해 Spotify 클라이언트를 생성.
+    - secrets.toml 예시:
+        [spotify]
+        client_id = "..."
+        client_secret = "..."
     """
     if spotipy is None:
-        st.warning("⚠️ spotipy 가 import 되지 않았습니다. requirements.txt에 'spotipy'를 추가했는지 확인해주세요.")
+        st.warning("⚠️ spotipy 가 import 되지 않았습니다. requirements.txt에 'spotipy'를 추가해주세요.")
         return None
 
     cid = None
     csec = None
 
-    # 1) st.secrets 구조를 dict로 변환
-    secrets_dict = {}
+    # 1) [spotify] 섹션 우선 사용
     try:
-        secrets_dict = st.secrets.to_dict()
+        spotify_section = st.secrets["spotify"]
+        cid = spotify_section.get("client_id") or spotify_section.get("CLIENT_ID")
+        csec = spotify_section.get("client_secret") or spotify_section.get("CLIENT_SECRET")
     except Exception:
-        secrets_dict = {}
+        spotify_section = {}
 
-    # (1) 가장 기본: 플랫 키 패턴 (대문자)
-    if "SPOTIFY_CLIENT_ID" in secrets_dict and "SPOTIFY_CLIENT_SECRET" in secrets_dict:
-        cid = secrets_dict["SPOTIFY_CLIENT_ID"]
-        csec = secrets_dict["SPOTIFY_CLIENT_SECRET"]
-        st.write("DEBUG - Spotify 키: 플랫 키(SPOTIFY_CLIENT_*)에서 읽음")
+    # 2) 환경변수 폴백
+    if not cid:
+        cid = os.getenv("SPOTIFY_CLIENT_ID")
+    if not csec:
+        csec = os.getenv("SPOTIFY_CLIENT_SECRET")
 
-    # (2) 소문자 플랫 패턴
-    elif "spotify_client_id" in secrets_dict and "spotify_client_secret" in secrets_dict:
-        cid = secrets_dict["spotify_client_id"]
-        csec = secrets_dict["spotify_client_secret"]
-        st.write("DEBUG - Spotify 키: 플랫 키(spotify_client_*)에서 읽음")
-
-    # (3) [spotify] 섹션 패턴
-    elif "spotify" in secrets_dict and isinstance(secrets_dict["spotify"], dict):
-        section = secrets_dict["spotify"]
-        # 여러 이름 후보 탐색
-        for k, v in section.items():
-            lk = k.lower()
-            if ("id" in lk or "client" in lk) and cid is None:
-                cid = v
-            if "secret" in lk and csec is None:
-                csec = v
-        st.write("DEBUG - Spotify 키: [spotify] 섹션에서 추정해서 읽음")
-
-    # 2) 그래도 못 찾으면, 환경변수에서 마지막으로 한 번 더 시도
-    if cid is None:
-        env_cid = os.getenv("SPOTIFY_CLIENT_ID", None)
-        if env_cid:
-            cid = env_cid
-            st.write("DEBUG - Spotify 키: 환경변수 SPOTIFY_CLIENT_ID에서 읽음")
-    if csec is None:
-        env_secret = os.getenv("SPOTIFY_CLIENT_SECRET", None)
-        if env_secret:
-            csec = env_secret
-            st.write("DEBUG - Spotify 키: 환경변수 SPOTIFY_CLIENT_SECRET에서 읽음")
-
-    # 3) 최종 체크
     if not cid or not csec:
-        st.warning("⚠️ Spotify Client ID/Secret 을 어디에서도 찾지 못했습니다.")
+        st.warning("⚠️ Spotify Client ID/Secret 이 설정되어 있지 않습니다.")
         return None
 
     try:
@@ -267,18 +214,47 @@ def get_spotify_client():
 
 
 def search_spotify_playlists(sp, query, market="KR", limit=3):
+    """
+    Spotify에서 playlist를 검색하고, 구조가 이상한 결과(NaN, None 등)를 방어적으로 정리.
+    """
     if sp is None:
         return []
+
     try:
         res = sp.search(q=query, type="playlist", limit=limit, market=market)
-        items = res.get("playlists", {}).get("items", [])
-        # 디버그: 검색 결과 개수
-        st.write(f"DEBUG - Spotify '{query}' 검색 결과 개수:", len(items))
-        return [{
-            "title": it.get("name", ""),
-            "owner": (it.get("owner") or {}).get("display_name", ""),
-            "url": it.get("external_urls", {}).get("spotify", "")
-        } for it in items]
+
+        playlists_block = res.get("playlists") or {}
+        items = playlists_block.get("items") or []
+
+        cleaned = []
+        for it in items:
+            # it 이 None 이거나 dict가 아니면 스킵
+            if not isinstance(it, dict):
+                continue
+
+            # 제목
+            title = it.get("name") or ""
+
+            # owner
+            owner_name = ""
+            owner_obj = it.get("owner") or {}
+            if isinstance(owner_obj, dict):
+                owner_name = owner_obj.get("display_name") or owner_obj.get("id") or ""
+
+            # URL
+            url = ""
+            ext = it.get("external_urls") or {}
+            if isinstance(ext, dict):
+                url = ext.get("spotify") or ""
+
+            cleaned.append({
+                "title": title,
+                "owner": owner_name,
+                "url": url
+            })
+
+        return cleaned
+
     except Exception as e:
         st.error(f"❌ Spotify 검색 중 오류: {e}")
         return []
@@ -329,15 +305,13 @@ def get_playlists_for_top3_with_llm(
                 raw = resp.choices[0].message.content
                 data = parse_json(raw)
                 query = data.get("query", "")
-            except Exception as e:
-                st.warning(f"⚠️ LLM 키워드 생성 실패({wname}): {e}")
+            except Exception:
+                # LLM 실패 시 폴백 쿼리로 진행
+                query = ""
 
         # 폴백: LLM이 실패하거나 빈 문자열이면 기본 쿼리
         if not query:
             query = f"{wname} workout playlist"
-
-        # 디버그: 실제 검색 쿼리 표시
-        st.write(f"DEBUG - Spotify 검색 쿼리({wname}): {query}")
 
         playlists = search_spotify_playlists(sp, query, market=market)
         result.append({"운동명": wname, "playlists": playlists})
@@ -427,7 +401,7 @@ JSON만 출력.
         st.write(f"### #{item['rank']} {item['운동명']}")
         st.write(item["이유"])
 
-    # ========================= ★ Spotify 블록 ★ =========================
+    # ========================= Spotify 블록 =========================
     emotion = get_emotion_from_daily(daily_row)
     top3_names = [t["운동명"] for t in top3]
     cache_key = f"{target_intensity}|{purpose}|{emotion}|{'/'.join(top3_names)}"
@@ -439,8 +413,6 @@ JSON만 출력.
         workout_playlist_pairs = st.session_state["playlist_cache"][cache_key]
     else:
         sp = get_spotify_client()
-        st.write("DEBUG - Spotify 클라이언트 생성 성공?:", sp is not None)
-
         workout_playlist_pairs = get_playlists_for_top3_with_llm(
             sp, top3, daily_row,
             target_intensity=target_intensity,
