@@ -5,13 +5,27 @@ st.set_page_config(page_title="추천운동 평가", page_icon="📊", layout="c
 st.title("📊 추천운동 평가")
 
 # =====================================================
-# 0. 구글시트 연결
+# 0. 구글시트 연결 (캐시 적용)
 # =====================================================
-sh = connect_gsheet("MoodFit")
-ws_daily = sh.worksheet("daily")
-ws_eval = sh.worksheet("evaluation")  # 평가 결과를 저장할 시트 (비어 있어도 됨)
+@st.cache_resource
+def get_spreadsheet():
+    """MoodFit 스프레드시트 객체를 캐시해서 재사용"""
+    return connect_gsheet("MoodFit")
 
-rows = ws_daily.get_all_values()
+@st.cache_data
+def load_daily_rows():
+    """
+    daily 시트의 전체 데이터를 캐시해서 재사용.
+    데이터가 바뀌면 메뉴에서 'Rerun' 하거나,
+    st.cache_data.clear()로 캐시를 지울 수 있음.
+    """
+    sh = get_spreadsheet()
+    ws_daily = sh.worksheet("daily")
+    return ws_daily.get_all_values()
+
+# daily 시트 데이터 불러오기
+rows = load_daily_rows()
+
 if not rows or len(rows) < 2:
     st.error("❌ daily 시트에 데이터가 없습니다.")
     st.stop()
@@ -82,11 +96,11 @@ if not rec1 and not rec2 and not rec3:
     st.warning("⚠ 이 날짜에는 저장된 추천운동이 없습니다.\n추천 페이지에서 먼저 추천을 받아주세요.")
     st.stop()
 
-recommended = [
-    {"name": rec1, "reason": reason1},
-    {"name": rec2, "reason": reason2},
-    {"name": rec3, "reason": reason3},
-]
+# 비어 있는 운동 이름은 제외하고 리스트 구성
+recommended = []
+for rec, reason in [(rec1, reason1), (rec2, reason2), (rec3, reason3)]:
+    if rec:  # 운동명이 있는 경우만
+        recommended.append({"name": rec, "reason": reason})
 
 # =====================================================
 # 3. 추천운동 + 이유 표시
@@ -141,10 +155,15 @@ st.markdown("---")
 
 # =====================================================
 # 6. evaluation 시트에 한 줄로 평가 결과 저장
+#    (여기서만 evaluation 시트에 접근)
 # =====================================================
 if st.button("💾 평가 제출하기", use_container_width=True):
 
-    # evaluation 시트가 완전 비어있다면, 헤더 한 줄 추가 (선택 사항)
+    # 스프레드시트 & evaluation 시트 객체 가져오기
+    sh = get_spreadsheet()
+    ws_eval = sh.worksheet("evaluation")  # 평가 결과를 저장할 시트 (비어 있어도 됨)
+
+    # evaluation 시트가 완전 비어있다면, 헤더 한 줄 추가
     eval_rows = ws_eval.get_all_values()
     if not eval_rows:
         ws_eval.append_row([
