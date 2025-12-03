@@ -18,8 +18,28 @@ st.markdown("""
     </p>
 """, unsafe_allow_html=True)
 
-# Google Sheet 연결
-sh = connect_gsheet("MoodFit")
+# =========================
+# 🔌 Google Sheet 연결 (캐시)
+# =========================
+@st.cache_resource
+def get_spreadsheet():
+    """MoodFit 스프레드시트 객체를 캐시해서 재사용"""
+    return connect_gsheet("MoodFit")
+
+@st.cache_data
+def load_existing_names():
+    """
+    이미 등록된 이름 목록을 캐시해서 재사용.
+    첫 행이 헤더라고 가정하고 [1:]로 내용만 사용.
+    """
+    sh = get_spreadsheet()
+    ws = sh.sheet1
+    names = ws.col_values(1)
+    if len(names) <= 1:
+        return []
+    return names[1:]
+
+sh = get_spreadsheet()
 ws = sh.sheet1   # 첫 시트
 
 # =========================
@@ -46,10 +66,9 @@ with col6:
     weight = st.text_input("몸무게 (kg)")
 
 # =========================
-# 🔁 이름 중복 체크
+# 🔁 이름 중복 체크 (캐시된 이름 목록 사용)
 # =========================
-# 시트의 1열(이름 컬럼) 가져오기 (첫 행이 헤더라면 [1:]로 내용만 사용)
-existing_names = ws.col_values(1)[1:]
+existing_names = load_existing_names()
 
 name = name.strip()
 is_duplicate = False
@@ -123,8 +142,11 @@ if st.button("💾 회원 등록 완료", use_container_width=True):
         injury_status, injury_detail
     ]
 
-    # (중복 체크는 이미 위에서 했으므로 바로 append 가능)
     ws.append_row(new_row)
+
+    # 새 회원이 추가되었으므로 이름 캐시를 갱신
+    load_existing_names.clear()
+
     st.success("🎉 회원 등록이 완료되었습니다!")
     st.balloons()
     st.switch_page("pages/2_daily_info2.py")
