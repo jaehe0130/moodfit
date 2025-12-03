@@ -104,16 +104,18 @@ def parse_json(text: str):
     return json.loads(text)
 
 
-# ========================= Google Sheets (캐시 적용) =========================
+# ========================= Google Sheets (연결 캐시만) =========================
 @st.cache_resource
 def get_spreadsheet():
     """MoodFit 스프레드시트 객체 캐시"""
     return connect_gsheet("MoodFit")
 
 
-@st.cache_data
 def load_daily_raw():
-    """daily 시트 전체 데이터를 캐시해서 재사용"""
+    """
+    daily 시트 전체 데이터를 항상 최신으로 가져오기.
+    추천 결과를 정확한 행에 쓰기 위해 캐시를 사용하지 않음.
+    """
     sh = get_spreadsheet()
     ws_daily = sh.worksheet("daily")
     return ws_daily.get_all_values()
@@ -138,7 +140,7 @@ st.info(f"현재날씨: {weather}, {temp:.1f}°C")
 sh = get_spreadsheet()
 ws_daily = sh.worksheet("daily")
 
-# 캐시된 daily/users 데이터
+# 최신 daily/users 데이터 로드
 daily_raw = load_daily_raw()
 if len(daily_raw) < 2:
     st.error("❌ daily 시트에 데이터가 없습니다.")
