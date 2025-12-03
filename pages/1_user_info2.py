@@ -22,7 +22,9 @@ st.markdown("""
 sh = connect_gsheet("MoodFit")
 ws = sh.sheet1   # 첫 시트
 
-# 입력 UI
+# =========================
+# 📝 기본 정보
+# =========================
 st.markdown("## 📝 기본 정보")
 
 col1, col2 = st.columns(2)
@@ -43,8 +45,39 @@ with col5:
 with col6:
     weight = st.text_input("몸무게 (kg)")
 
+# =========================
+# 🔁 이름 중복 체크
+# =========================
+# 시트의 1열(이름 컬럼) 가져오기 (첫 행이 헤더라면 [1:]로 내용만 사용)
+existing_names = ws.col_values(1)[1:]
+
+name = name.strip()
+is_duplicate = False
+suggested_name = None
+
+if name:
+    if name in existing_names:
+        is_duplicate = True
+        # 같은 이름이 이미 있으면, 추천 이름 하나 만들어서 안내
+        base = name
+        i = 2
+        candidate = f"{base}_{i}"
+        while candidate in existing_names:
+            i += 1
+            candidate = f"{base}_{i}"
+        suggested_name = candidate
+
+        st.error(
+            f"⚠ 이미 등록된 이름입니다. 나중에 운동 추천에서 헷갈리지 않도록, "
+            f"다른 이름(별명)을 사용해주세요.\n\n"
+            f"예시: **{suggested_name}**"
+        )
+
 st.markdown("---")
 
+# =========================
+# 🩹 부상 이력
+# =========================
 st.markdown("## 🩹 부상 이력")
 
 injury_status = st.radio("부상 여부", ["없음", "있음"], horizontal=True)
@@ -61,21 +94,37 @@ if injury_status == "있음":
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# =========================
+# 💾 회원 등록 버튼
+# =========================
 if st.button("💾 회원 등록 완료", use_container_width=True):
-    if not name.strip():
-        st.warning("⚠️ 이름을 입력해주세요.")
+    # 이름 미입력
+    if not name:
+        st.warning("⚠ 이름을 입력해주세요.")
         st.stop()
 
+    # 이름 중복이면 저장 막고 안내
+    if is_duplicate:
+        if suggested_name:
+            st.warning(
+                f"⚠ 이미 등록된 이름입니다. 예를 들어 **{suggested_name}** 처럼 "
+                f"다른 이름(별명)을 입력한 뒤 다시 '회원 등록 완료' 버튼을 눌러주세요."
+            )
+        else:
+            st.warning(
+                "⚠ 이미 등록된 이름입니다. 나중에 운동 추천에서 헷갈리지 않도록, "
+                "다른 이름(별명)을 사용해주세요."
+            )
+        st.stop()
+
+    # 새 회원 행 생성
     new_row = [
         name, age, gender, height, weight, activity,
         injury_status, injury_detail
     ]
 
-    existing_names = ws.col_values(1)
-    if name in existing_names:
-        st.warning("⚠ 이미 등록된 회원입니다.")
-    else:
-        ws.append_row(new_row)
-        st.success("🎉 회원 등록이 완료되었습니다!")
-        st.balloons()
-        st.switch_page("pages/2_daily_info2.py")
+    # (중복 체크는 이미 위에서 했으므로 바로 append 가능)
+    ws.append_row(new_row)
+    st.success("🎉 회원 등록이 완료되었습니다!")
+    st.balloons()
+    st.switch_page("pages/2_daily_info2.py")
