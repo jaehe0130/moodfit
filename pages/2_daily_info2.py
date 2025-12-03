@@ -29,10 +29,9 @@ def get_spreadsheet():
     """MoodFit 스프레드시트 객체 캐시"""
     return connect_gsheet("MoodFit")
 
-@st.cache_data
 def load_users():
     """
-    회원 이름 목록을 캐시해서 재사용.
+    회원 이름 목록을 항상 최신으로 가져오기 위해 캐시를 사용하지 않음.
     첫 행이 헤더라고 가정하고 [1:]로 내용만 사용.
     """
     sh = get_spreadsheet()
@@ -82,7 +81,7 @@ purpose = st.radio(
 )
 
 exercise_place = st.selectbox("운동 장소", ["실내(집)", "실내(헬스장)", "야외(공원)", "기타"])
-equip = st.multiselect("보유 장비", ["요가매트","덤벨","밴드","폼롤러","점프 로프","푸쉬업바"])
+equip = st.multiselect("보유 장비", ["요가매트", "덤벨", "밴드", "폼롤러", "점프 로프", "푸쉬업바"])
 equip_str = ", ".join(equip) if equip else "없음"
 
 avg_score = compute_avg_arousal(emotions)
