@@ -152,7 +152,7 @@ def build_user_profile(user_row, daily_row, weather, temp):
     """
     profile = {
         "정적프로필": user_row.to_dict(),   # 이름, 나이 (만나이), 성별, 키(cm), 몸무게(kg), 평소 활동량, 부상 여부, 부상 부위
-        "오늘컨디션": daily_row.to_dict(),  # 감정, 감정_평균각성점수, 수면 시간, 운동 가능 시간(분), 스트레스, 운동목적, 운동장소, 보유장비
+        "오늘컨디션": daily_row.to_dict(),  # 날짜, 감정, 감정_평균각성점수, 수면 시간, 운동 가능 시간(분), 스트레스, 운동목적, 운동장소, 보유장비
         "환경정보": {
             "날씨": weather,
             "기온_C": temp,
@@ -398,7 +398,7 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     ]
 
     # ===== 프롬프트 =====
-    system_prompt = f"""
+    system_prompt = """
 당신은 개인 맞춤형 운동 코치입니다.
 
 [입력 설명]
@@ -456,13 +456,13 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
      (예: "수면 시간이 짧고 스트레스가 높아, 부드러운 전신 스트레칭 위주로 구성했습니다." 등)
 
 출력 형식:
-{{
+{
   "top3": [
-    {{"rank":1, "운동명":"", "이유":""}},
-    {{"rank":2, "운동명":"", "이유":""}},
-    {{"rank":3, "운동명":"", "이유":""}}
+    {"rank":1, "운동명":"", "이유":""},
+    {"rank":2, "운동명":"", "이유":""},
+    {"rank":3, "운동명":"", "이유":""}
   ]
-}}
+}
 """
 
     # LLM에 넘길 payload (사용자 정보 + 운동 후보)
@@ -472,17 +472,20 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     }
 
     with st.spinner("추천 생성 중..."):
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": json.dumps(payload, ensure_ascii=False, default=str)
-            },
-        ],
-        temperature=0.6,
-    )
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": json.dumps(payload, ensure_ascii=False, default=str),
+                },
+            ],
+            temperature=0.6,
+        )
+
+        raw = resp.choices[0].message.content
+        top3 = parse_json(raw)["top3"]
 
     # ======== Google Sheet 업데이트 ========
     headers = daily_raw[0]
