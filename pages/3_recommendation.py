@@ -472,17 +472,17 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     }
 
     with st.spinner("추천 생성 중..."):
-        resp = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            temperature=0.6,
-        )
-
-        raw = resp.choices[0].message.content
-        top3 = parse_json(raw)["top3"]
+    resp = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": json.dumps(payload, ensure_ascii=False, default=str)
+            },
+        ],
+        temperature=0.6,
+    )
 
     # ======== Google Sheet 업데이트 ========
     headers = daily_raw[0]
