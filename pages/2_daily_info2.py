@@ -33,20 +33,43 @@ def get_spreadsheet():
 def load_users():
     """
     회원 이름 목록을 캐시해서 재사용.
-    - 스프레드시트의 'users' 시트 사용
-    - A열(첫 번째 열)에 '이름' 헤더 + 데이터가 있다고 가정
+
+    - 1순위: 'users' 시트의 A열
+    - 2순위: 'sheet1' (회원 등록을 거기에 저장했을 수도 있는 경우)
+    - 헤더가 있을 수도, 없을 수도 있다고 보고 둘 다 처리
     """
     sh = get_spreadsheet()
-    ws_user = sh.worksheet("users")  # ▶️ 회원 정보 시트
 
-    names = ws_user.col_values(1)  # A열 전체
+    ws_user = None
 
-    # 예: ["이름", "홍길동", "김지우", ...]
-    if len(names) <= 1:
+    # 1) users 시트가 있으면 우선 사용
+    try:
+        ws_user = sh.worksheet("users")
+    except Exception:
+        pass
+
+    # 2) users 시트가 없다면 sheet1 사용
+    if ws_user is None:
+        try:
+            ws_user = sh.sheet1
+        except Exception:
+            return []
+
+    raw = ws_user.col_values(1)  # A열 전체
+    if not raw:
         return []
 
-    # 헤더("이름") 제외하고 실제 이름만 반환
-    return names[1:]
+    # 공백 제거 + 빈 값 제거
+    names = [n.strip() for n in raw if n and n.strip()]
+
+    # 첫 번째 값이 헤더(이름, name 등)라면 제거
+    if names and names[0] in ("이름", "name", "Name", "NAME"):
+        names = names[1:]
+
+    # 중복 제거 후 정렬
+    names = sorted(list(set(names)))
+
+    return names
 
 # 스프레드시트 & daily 시트 (이건 네트워크 호출 아님, 객체 재사용)
 sh = get_spreadsheet()
