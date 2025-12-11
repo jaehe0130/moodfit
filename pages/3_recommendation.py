@@ -122,11 +122,10 @@ def get_spreadsheet():
     return connect_gsheet("MoodFit")
 
 
-@st.cache_data
+# ❌ 캐시 X : 항상 최신 daily를 읽기 위해 데코레이터 제거
 def load_daily_raw():
     """
-    daily 시트 전체 데이터를 캐시해서 재사용.
-    이 페이지 안에서 daily를 수정한 경우, 수정 직후 load_daily_raw.clear() 로 캐시 갱신.
+    daily 시트 전체 데이터를 항상 새로 읽어옴.
     """
     sh = get_spreadsheet()
     ws_daily = sh.worksheet("daily")
@@ -317,6 +316,12 @@ if len(daily_raw) < 2:
 daily_df = pd.DataFrame(daily_raw[1:], columns=daily_raw[0])
 users_df = load_users_df()   # ✅ 항상 최신 users 시트를 읽음
 
+# 👉 이름 공백 정규화 (매칭 문제 방지)
+if "이름" in daily_df.columns:
+    daily_df["이름"] = daily_df["이름"].astype(str).str.strip()
+if "이름" in users_df.columns:
+    users_df["이름"] = users_df["이름"].astype(str).str.strip()
+
 daily_df["날짜"] = pd.to_datetime(daily_df["날짜"], errors="coerce").dt.date
 
 # ========================= 사용자 선택 =========================
@@ -338,7 +343,7 @@ sheet_row = row_idx + 2  # 헤더 1줄 + 1-based index
 # 사용자 정적 정보 (users 시트)
 user_row = users_df[users_df["이름"] == user_name].iloc[0]
 
-# daily 시트에서 운동장소/보유장비 사용
+# daily 시트에서 운동장소/보유장비 사용 (현재는 룰 후보 필터링에는 사용 X, 이후 확장용)
 place_pref = daily_row.get("운동장소", "상관없음")
 equip_raw = daily_row.get("보유장비", "")
 equip_list = [s.strip() for s in str(equip_raw).split(",") if s.strip()]
@@ -382,7 +387,7 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
         for _, r in candidates.iterrows()
     ]
 
-    # ===================== 시스템 프롬프트 (예시) =====================
+    # ===================== 시스템 프롬프트 =====================
     system_prompt = """
 당신은 개인 맞춤 운동 추천 엔진입니다.
 
@@ -471,9 +476,6 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     ws_daily.update_cell(sheet_row, c_r1, top3[0]["이유"])
     ws_daily.update_cell(sheet_row, c_r2, top3[1]["이유"])
     ws_daily.update_cell(sheet_row, c_r3, top3[2]["이유"])
-
-    # daily 캐시 클리어
-    load_daily_raw.clear()
 
     st.success("🎉 daily 시트 저장 완료!")
 
