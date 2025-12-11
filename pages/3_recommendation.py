@@ -240,8 +240,16 @@ def search_spotify_playlists(sp, query, market="KR", limit=3):
 
 # ========================= LLM 기반 Spotify 검색 키워드 =========================
 def get_playlists_for_top3_with_llm(
-    sp, top3, daily_row, target_intensity, purpose, market="KR"
+    sp, top3, daily_row, purpose, market="KR"
 ):
+    """
+    top3 각각에 대해:
+    - 운동명
+    - daily의 감정/컨디션
+    - 운동목적
+    - (workout.csv에서 가져온 운동강도: item["운동강도"])
+    를 참고해서 Spotify 검색 키워드를 LLM으로 한 번 뽑은 뒤, Spotify에서 플레이리스트 검색.
+    """
     if sp is None:
         # Spotify 사용 불가 시, 구조만 맞춰서 빈 리스트 반환
         return [{"운동명": t["운동명"], "playlists": []} for t in top3]
@@ -256,6 +264,8 @@ def get_playlists_for_top3_with_llm(
 
     for item in top3:
         wname = item["운동명"]
+        w_intensity = item.get("운동강도", "")  # workout.csv에서 매핑된 강도(있으면)
+
         query = ""
 
         if client:
@@ -263,7 +273,7 @@ def get_playlists_for_top3_with_llm(
                 "workout": wname,
                 "emotion": emotion,
                 "purpose": purpose,
-                "intensity": target_intensity,
+                "intensity": w_intensity,
                 "instruction": "검색용 키워드 한 개만 JSON으로 출력. {\"query\": \"...\"}"
             }
             try:
@@ -348,15 +358,18 @@ place_pref = daily_row.get("운동장소", "상관없음")
 equip_raw = daily_row.get("보유장비", "")
 equip_list = [s.strip() for s in str(equip_raw).split(",") if s.strip()]
 
-# ========================= RULE 후보군 =========================
-purpose = daily_row.get("운동목적", "")
-target_intensity = "중강도"  # 기본값
+# ========================= RULE 후보군 (운동목적 기반 1차 필터) =========================
+# ✅ 핵심: 사용자가 오늘 선택한 "운동목적"을 기준으로 workout.csv에서 1차 후보 생성
+purpose = str(daily_row.get("운동목적", "")).strip()
 
 if purpose:
+    # 운동목적_list 안에 해당 목적이 포함된 운동만 후보
     candidates = workouts_df[workouts_df["운동목적_list"].apply(lambda x: purpose in x)]
+    # 만약 목적에 맞는 운동이 하나도 없으면, 전체 운동을 후보로 사용
     if candidates.empty:
         candidates = workouts_df.copy()
 else:
+    # 운동목적이 비어 있으면 전체 운동을 후보로 사용
     candidates = workouts_df.copy()
 
 st.markdown("---")
@@ -378,10 +391,12 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
         temp=temp,
     )
 
+    # 1차로 필터링된 후보군만 LLM에 전달
+    # workout.csv에 매핑된 운동강도도 같이 넘겨줌
     rule_candidates = [
         {
             "운동명": r["운동명"],
-            "운동목적": r["운동목적"],
+            "운동목적": r.get("운동목적", ""),
             "운동강도": r.get("운동강도", ""),
         }
         for _, r in candidates.iterrows()
@@ -392,7 +407,9 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
 당신은 개인 맞춤 운동 추천 엔진입니다.
 
 입력으로 사용자 프로필(user_profile)과 룰 기반 후보 운동(rule_candidates)이 주어집니다.
-이 정보를 바탕으로 오늘 사용자에게 가장 적합한 운동 3가지를 선택하고, 각 운동에 대한 추천 이유를 작성하세요.
+rule_candidates 목록은 이미 사용자의 오늘 운동 목적에 맞게 1차로 필터링한 결과입니다.
+각 운동에는 workout.csv에서 매핑된 운동 목적과 운동 강도 정보가 포함되어 있습니다.
+이 후보 목록 안에서 오늘 사용자에게 가장 적합한 운동 3가지를 선택하고, 각 운동에 대한 추천 이유를 작성하세요.
 
 출력 형식은 반드시 아래 JSON 하나의 객체만 사용해야 합니다.
 설명 문장, 마크다운, 코드블록 없이 JSON만 출력하세요.
@@ -420,6 +437,7 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
 규칙:
 - 반드시 3개만 추천합니다.
 - "운동명"은 rule_candidates 안에 존재하는 운동명만 사용합니다.
+- rule_candidates 밖의 운동명은 절대 사용하지 않습니다.
 - "rank"는 1, 2, 3의 정수로 지정합니다.
 - "이유"는 2~4문장 정도로, 너무 길지 않게 작성합니다.
     """
@@ -454,6 +472,16 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
 
         top3 = parsed["top3"]
 
+    # workout.csv에서 운동명 → 운동강도 매핑해서 top3에 붙여줌 (Spotify LLM에서 쓰기 위함)
+    if "운동강도" in workouts_df.columns:
+        intensity_map = workouts_df.set_index("운동명")["운동강도"].to_dict()
+        for item in top3:
+            wname = item.get("운동명", "")
+            item["운동강도"] = intensity_map.get(wname, "")
+    else:
+        for item in top3:
+            item["운동강도"] = ""
+
     headers = daily_raw[0]
 
     def col_idx(name):
@@ -477,7 +505,6 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     ws_daily.update_cell(sheet_row, c_r2, top3[1]["이유"])
     ws_daily.update_cell(sheet_row, c_r3, top3[2]["이유"])
 
-
     # 화면 표시
     st.markdown("## 🏅 추천 Top3")
     for item in top3:
@@ -488,7 +515,6 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     sp = get_spotify_client()
     workout_playlist_pairs = get_playlists_for_top3_with_llm(
         sp, top3, daily_row,
-        target_intensity=target_intensity,
         purpose=purpose,
         market="KR"
     )
