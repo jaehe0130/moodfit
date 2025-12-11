@@ -37,38 +37,16 @@ def load_existing_names():
     첫 행이 헤더라고 가정하고 [1:]로 내용만 사용.
     """
     sh = get_spreadsheet()
-    ws = sh.worksheet("users")   # 🔹 회원 정보는 users 시트에 저장한다고 가정
+    ws = sh.worksheet("users")   # 회원 정보는 users 시트에 저장
     names = ws.col_values(1)
     if len(names) <= 1:
         return []
     # 공백 제거 + 빈 값 제거
     return [n.strip() for n in names[1:] if n and n.strip()]
 
-# 스프레드시트/워크시트 객체 (이건 네트워크 호출 아님)
+# 스프레드시트/워크시트 객체 (네트워크 호출 아님, 캐시된 객체 재사용)
 sh = get_spreadsheet()
-ws = sh.worksheet("users")   # 🔹 명시적으로 users 시트를 사용
-
-# =========================
-# 🔍 디버그용 출력 (원하면 잠깐만 사용)
-# =========================
-st.write("📄 Spreadsheet URL:", sh.url)
-st.write("📑 Worksheets:", [w.title for w in sh.worksheets()])
-
-try:
-    ws_daily = sh.worksheet("daily")
-    daily_rows = ws_daily.get_all_values()
-    st.write("🧪 daily 마지막 3줄:", daily_rows[-3:])
-except Exception as e:
-    st.write("daily 시트 접근 에러:", e)
-
-try:
-    ws_users = sh.worksheet("users")
-    users_rows = ws_users.get_all_values()
-    st.write("🧪 users 전체:", users_rows)
-except Exception as e:
-    st.write("users 시트 접근 에러:", e)
-
-st.markdown("---")
+ws = sh.worksheet("users")   # 명시적으로 users 시트를 사용
 
 # =========================
 # 📝 기본 정보
