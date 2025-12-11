@@ -12,19 +12,32 @@ def get_spreadsheet():
     """MoodFit 스프레드시트 객체를 캐시해서 재사용"""
     return connect_gsheet("MoodFit")
 
-@st.cache_data
 def load_daily_rows():
     """
-    daily 시트의 전체 데이터를 캐시해서 가져오기.
-    - 이 페이지에 처음 들어오면 1번만 구글시트 호출
-    - 이후 rerun 시에는 캐시에서 재사용 → 호출 최소화
-    - daily 시트가 다른 페이지에서 변경되면, 이 페이지를 새로 열면 최신 데이터가 로드됨.
+    daily 시트의 전체 데이터를 매번 새로 가져오기.
+    👉 평가 페이지에서는 방금 저장한 사용자도 바로 보여야 해서 캐시를 사용하지 않음.
     """
     sh = get_spreadsheet()
     ws_daily = sh.worksheet("daily")
     return ws_daily.get_all_values()
 
-# daily 시트 데이터 불러오기
+def load_user_names_from_users_sheet():
+    """
+    (선택) users 시트에서 사용자 이름 가져오기.
+    users 시트가 없거나 에러 나면 그냥 빈 리스트 반환.
+    """
+    try:
+        sh = get_spreadsheet()
+        ws_users = sh.worksheet("users")
+        names = ws_users.col_values(1)  # A열
+        if len(names) <= 1:
+            return []
+        # 헤더 제외 + 공백 제거 + 빈값 제거
+        return [n.strip() for n in names[1:] if n and n.strip()]
+    except Exception:
+        return []  # users 시트 없으면 무시
+
+# ----------------- daily 시트 데이터 불러오기 -----------------
 rows = load_daily_rows()
 
 if not rows or len(rows) < 2:
@@ -38,12 +51,28 @@ data = rows[1:]
 # 1. 사용자 / 날짜 선택
 # =====================================================
 
-# 유저 목록 추출 (2열: 이름)
-user_list = sorted(list({row[1] for row in data if len(row) > 1 and row[1]}))
+# daily 기준 이름 목록 (공백 제거)
+daily_user_names = {
+    (row[1] or "").strip()
+    for row in data
+    if len(row) > 1 and row[1] and (row[1] or "").strip()
+}
+
+# users 시트 기준 이름 목록도 합치기 (회원등록 시 users에 들어가는 경우 대비)
+users_sheet_names = set(load_user_names_from_users_sheet())
+
+# 두 집합을 합쳐서 최종 사용자 목록
+user_list = sorted(daily_user_names | users_sheet_names)
 
 def get_dates_for_user(user):
-    """해당 사용자의 날짜 목록만 추출"""
-    return sorted({row[0] for row in data if len(row) > 1 and row[1] == user})
+    """해당 사용자의 날짜 목록만 daily 시트에서 추출 (이름 공백 제거 후 비교)"""
+    result = set()
+    for row in data:
+        if len(row) > 1:
+            name_val = (row[1] or "").strip()
+            if name_val == user:
+                result.add(row[0])   # 날짜는 문자열 그대로 사용
+    return sorted(result)
 
 st.subheader("👤 사용자 선택")
 selected_user = st.selectbox("사용자를 선택하세요:", ["선택"] + user_list)
@@ -56,7 +85,8 @@ st.subheader("📅 날짜 선택")
 user_dates = get_dates_for_user(selected_user)
 
 if not user_dates:
-    st.error("⚠ 해당 사용자의 기록이 없습니다.")
+    st.error("⚠ 해당 사용자의 기록이 없습니다.\n"
+             "먼저 컨디션 기록 + 운동 추천을 받은 뒤 평가해주세요.")
     st.stop()
 
 selected_date = st.selectbox("날짜를 선택하세요:", ["선택"] + sorted(user_dates))
@@ -82,7 +112,7 @@ for row in data:
         continue
 
     date_val = row[0]
-    name_val = row[1]
+    name_val = (row[1] or "").strip()
 
     if date_val == selected_date and name_val == selected_user:
         rec1 = row[10]
@@ -94,7 +124,8 @@ for row in data:
         break
 
 if not rec1 and not rec2 and not rec3:
-    st.warning("⚠ 이 날짜에는 저장된 추천운동이 없습니다.\n추천 페이지에서 먼저 추천을 받아주세요.")
+    st.warning("⚠ 이 날짜에는 저장된 추천운동이 없습니다.\n"
+               "추천 페이지에서 먼저 추천을 받아주세요.")
     st.stop()
 
 # 비어 있는 운동 이름은 제외하고 리스트 구성
@@ -176,7 +207,7 @@ if st.button("💾 평가 제출하기", use_container_width=True):
 
     # 운동 이름 순서를 rec1~3 기준으로 맞춰서 저장
     row_to_append = [
-        selected_date,          # 날짜 (selectbox에서 선택한 문자열)
+        selected_date,          # 날짜
         selected_user,          # 이름
         rec1, rec2, rec3,       # 추천운동1~3
         ratings.get(rec1, ""),  # 운동1 평가
