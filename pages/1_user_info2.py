@@ -1,29 +1,11 @@
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 from sheets_auth import connect_gsheet
 
-sh = get_spreadsheet()
-st.write("📄 Spreadsheet URL:", sh.url)
-st.write("📑 Worksheets:", [ws.title for ws in sh.worksheets()])
-
-# daily 시트 최근 3줄 찍어보기
-try:
-    ws_daily = sh.worksheet("daily")
-    daily_rows = ws_daily.get_all_values()
-    st.write("🧪 daily 마지막 3줄:", daily_rows[-3:])
-except Exception as e:
-    st.write("daily 시트 접근 에러:", e)
-
-# users 시트도 확인
-try:
-    ws_users = sh.worksheet("users")
-    users_rows = ws_users.get_all_values()
-    st.write("🧪 users 전체:", users_rows)
-except Exception as e:
-    st.write("users 시트 접근 에러:", e)
-
-
-# 페이지 기본 설정
+# =========================
+# 페이지 기본 설정 (가장 먼저!)
+# =========================
 st.set_page_config(
     page_title="회원 등록",
     layout="centered",
@@ -51,18 +33,42 @@ def get_spreadsheet():
 def load_existing_names():
     """
     이미 등록된 이름 목록을 캐시해서 재사용.
+    'users' 시트의 A열(이름) 기준.
     첫 행이 헤더라고 가정하고 [1:]로 내용만 사용.
     """
     sh = get_spreadsheet()
-    ws = sh.sheet1
+    ws = sh.worksheet("users")   # 🔹 회원 정보는 users 시트에 저장한다고 가정
     names = ws.col_values(1)
     if len(names) <= 1:
         return []
-    return names[1:]
+    # 공백 제거 + 빈 값 제거
+    return [n.strip() for n in names[1:] if n and n.strip()]
 
 # 스프레드시트/워크시트 객체 (이건 네트워크 호출 아님)
 sh = get_spreadsheet()
-ws = sh.sheet1   # 첫 시트
+ws = sh.worksheet("users")   # 🔹 명시적으로 users 시트를 사용
+
+# =========================
+# 🔍 디버그용 출력 (원하면 잠깐만 사용)
+# =========================
+st.write("📄 Spreadsheet URL:", sh.url)
+st.write("📑 Worksheets:", [w.title for w in sh.worksheets()])
+
+try:
+    ws_daily = sh.worksheet("daily")
+    daily_rows = ws_daily.get_all_values()
+    st.write("🧪 daily 마지막 3줄:", daily_rows[-3:])
+except Exception as e:
+    st.write("daily 시트 접근 에러:", e)
+
+try:
+    ws_users = sh.worksheet("users")
+    users_rows = ws_users.get_all_values()
+    st.write("🧪 users 전체:", users_rows)
+except Exception as e:
+    st.write("users 시트 접근 에러:", e)
+
+st.markdown("---")
 
 # =========================
 # 📝 기본 정보
@@ -146,13 +152,11 @@ if st.button("💾 회원 등록 완료", use_container_width=True):
         st.warning("⚠ 이름을 입력해주세요.")
         st.stop()
 
-    # (안전장치) 버튼 클릭 시에도 혹시 모를 중복 체크를 위해 한 번 더 확인 가능
-    # 단, load_existing_names는 캐시되어 있어서 실제 구글시트 호출은 거의 없음
+    # (안전장치) 버튼 클릭 시에도 혹시 모를 중복 체크를 위해 한 번 더 확인
     if not existing_names:
         existing_names = load_existing_names()
 
     if name in existing_names:
-        # 위에서 이미 is_duplicate 계산했지만, 혹시 흐름상 누락된 경우를 대비한 이중 방어
         is_duplicate = True
         if not suggested_name:
             base = name
