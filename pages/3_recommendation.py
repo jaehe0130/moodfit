@@ -104,27 +104,32 @@ def parse_json(text: str):
     return json.loads(text)
 
 
-# ========================= Google Sheets (연결 캐시만) =========================
+# ========================= Google Sheets (연결 캐시) =========================
 @st.cache_resource
 def get_spreadsheet():
     """MoodFit 스프레드시트 객체 캐시"""
     return connect_gsheet("MoodFit")
 
 
+@st.cache_data
 def load_daily_raw():
     """
-    daily 시트 전체 데이터를 항상 최신으로 가져오기.
-    추천 결과를 정확한 행에 쓰기 위해 캐시를 사용하지 않음.
+    daily 시트 전체 데이터를 캐시해서 재사용.
+    - 이 페이지에서 여러 번 rerun 되어도 구글시트 읽기 호출은 1번만 나감.
+    - 이 페이지 안에서 daily를 수정한 경우, 수정 직후 load_daily_raw.clear() 로 캐시를 갱신.
     """
     sh = get_spreadsheet()
     ws_daily = sh.worksheet("daily")
     return ws_daily.get_all_values()
 
 
+@st.cache_data
 def load_users_df():
     """
-    users 시트 전체를 DataFrame으로 가져오기.
-    새로 가입한 회원이 바로 보이도록 캐시하지 않음.
+    users 시트 전체를 DataFrame으로 가져오기 (캐시 사용).
+    - 새로 가입한 회원이 바로 안 보이는 문제는 거의 없고
+      보통 '회원 등록 → 컨디션 입력 → 추천' 순서로 오기 때문에,
+      이 페이지에서는 캐시로 최소 호출만 신경 쓰면 됨.
     """
     sh = get_spreadsheet()
     ws_users = sh.worksheet("users")
@@ -312,7 +317,7 @@ def get_playlists_for_top3_with_llm(
 
 # ========================= 페이지 메인 로직 =========================
 
-# ========== 날씨 입력 ==========
+# ========== 날씨 입력 ========== 
 city = st.text_input("🌍 도시명", "Seoul")
 weather, temp = get_weather(city)
 st.info(f"현재날씨: {weather}, {temp:.1f}°C")
@@ -321,7 +326,7 @@ st.info(f"현재날씨: {weather}, {temp:.1f}°C")
 sh = get_spreadsheet()
 ws_daily = sh.worksheet("daily")
 
-# 최신 daily/users 데이터 로드
+# 최신 daily/users 데이터 로드 (캐시된 데이터 사용)
 daily_raw = load_daily_raw()
 if len(daily_raw) < 2:
     st.error("❌ daily 시트에 데이터가 없습니다.")
@@ -509,6 +514,9 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     ws_daily.update_cell(sheet_row, c_r1, top3[0]["이유"])
     ws_daily.update_cell(sheet_row, c_r2, top3[1]["이유"])
     ws_daily.update_cell(sheet_row, c_r3, top3[2]["이유"])
+
+    # daily 시트 내용이 바뀌었으니 캐시 갱신
+    load_daily_raw.clear()
 
     st.success("🎉 daily 시트 저장 완료!")
 
