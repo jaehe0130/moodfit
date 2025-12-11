@@ -39,6 +39,7 @@ def load_existing_names():
         return []
     return names[1:]
 
+# 스프레드시트/워크시트 객체 (이건 네트워크 호출 아님)
 sh = get_spreadsheet()
 ws = sh.sheet1   # 첫 시트
 
@@ -66,15 +67,17 @@ with col6:
     weight = st.text_input("몸무게 (kg)")
 
 # =========================
-# 🔁 이름 중복 체크 (캐시된 이름 목록 사용)
+# 🔁 이름 중복 체크 (필요할 때만 시트 조회)
 # =========================
-existing_names = load_existing_names()
-
 name = name.strip()
 is_duplicate = False
 suggested_name = None
+existing_names = []
 
 if name:
+    # 이름이 실제로 입력된 경우에만 시트에서 이름 목록을 로드
+    existing_names = load_existing_names()
+
     if name in existing_names:
         is_duplicate = True
         # 같은 이름이 이미 있으면, 추천 이름 하나 만들어서 안내
@@ -121,6 +124,23 @@ if st.button("💾 회원 등록 완료", use_container_width=True):
     if not name:
         st.warning("⚠ 이름을 입력해주세요.")
         st.stop()
+
+    # (안전장치) 버튼 클릭 시에도 혹시 모를 중복 체크를 위해 한 번 더 확인 가능
+    # 단, load_existing_names는 캐시되어 있어서 실제 구글시트 호출은 거의 없음
+    if not existing_names:
+        existing_names = load_existing_names()
+
+    if name in existing_names:
+        # 위에서 이미 is_duplicate 계산했지만, 혹시 흐름상 누락된 경우를 대비한 이중 방어
+        is_duplicate = True
+        if not suggested_name:
+            base = name
+            i = 2
+            candidate = f"{base}_{i}"
+            while candidate in existing_names:
+                i += 1
+                candidate = f"{base}_{i}"
+            suggested_name = candidate
 
     # 이름 중복이면 저장 막고 안내
     if is_duplicate:
