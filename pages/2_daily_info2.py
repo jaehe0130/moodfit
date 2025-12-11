@@ -31,15 +31,20 @@ def get_spreadsheet():
 
 def load_users():
     """
-    회원 이름 목록을 항상 최신으로 가져오기 위해 캐시를 사용하지 않음.
-    첫 행이 헤더라고 가정하고 [1:]로 내용만 사용.
+    회원 이름 목록을 항상 최신으로 가져오기.
+    - 스프레드시트의 'users' 시트 사용
+    - A열(첫 번째 열)에 '이름' 헤더 + 데이터가 있다고 가정
     """
     sh = get_spreadsheet()
-    ws_user = sh.sheet1   # 첫 시트: 회원 정보 시트
-    names = ws_user.col_values(1)
+    ws_user = sh.worksheet("users")  # ▶️ 회원 정보 시트 이름 명시
+
+    names = ws_user.col_values(1)  # A열
+
+    # 예: ["이름", "홍길동", "김지우", ...]
     if len(names) <= 1:
         return []
-    return names[1:]
+
+    return names[1:]  # 헤더("이름") 제외하고 실제 이름만 반환
 
 # 스프레드시트 & daily 시트
 sh = get_spreadsheet()
