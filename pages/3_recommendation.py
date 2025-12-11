@@ -477,7 +477,6 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     ws_daily.update_cell(sheet_row, c_r2, top3[1]["이유"])
     ws_daily.update_cell(sheet_row, c_r3, top3[2]["이유"])
 
-    st.success("🎉 daily 시트 저장 완료!")
 
     # 화면 표시
     st.markdown("## 🏅 추천 Top3")
