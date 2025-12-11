@@ -82,23 +82,37 @@ def get_weather(city):
         return "unknown", 0.0
 
 
-# ========================= JSON 파서 =========================
+# ========================= JSON 파서 (강화 버전) =========================
 def parse_json(text: str):
-    if not text:
-        raise ValueError("빈 JSON")
+    """
+    LLM 응답 문자열에서 JSON 객체만 안전하게 파싱.
+    실패 시, 원본 텍스트를 화면에 보여주고 예외를 다시 올립니다.
+    """
+    if not text or not text.strip():
+        raise ValueError("LLM 응답이 비어 있습니다.")
 
     text = text.strip()
+
     # ```json, ``` 제거
     text = re.sub(r"^```json", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"^```", "", text, flags=re.IGNORECASE).strip()
     text = re.sub(r"```$", "", text).strip()
-    text = re.sub(r"^```", "", text).strip()
 
     # 중괄호 블록만 추출
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    m = re.search(r"\{[\s\S]*\}", text)
     if m:
         text = m.group(0)
 
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        # 디버깅용: 실제로 어떤 응답이 왔는지 화면에 보여주기
+        try:
+            st.error("⚠️ LLM JSON 파싱에 실패했습니다. 아래 원본 응답을 확인하세요.")
+            st.code(text)
+        except Exception:
+            print("JSON parse error, raw text:", text)
+        raise e
 
 
 # ========================= Google Sheets (연결 캐시) =========================
@@ -119,7 +133,7 @@ def load_daily_raw():
     return ws_daily.get_all_values()
 
 
-# 🔴 여기!! users_df는 캐시를 쓰면 새 회원이 안 보여서 캐시 제거
+# 🔴 users_df는 캐시를 쓰면 새 회원이 안 보여서 캐시 제거
 def load_users_df():
     """
     users 시트 전체를 DataFrame으로 가져오기.
@@ -230,6 +244,7 @@ def get_playlists_for_top3_with_llm(
     sp, top3, daily_row, target_intensity, purpose, market="KR"
 ):
     if sp is None:
+        # Spotify 사용 불가 시, 구조만 맞춰서 빈 리스트 반환
         return [{"운동명": t["운동명"], "playlists": []} for t in top3]
 
     client = None
@@ -255,10 +270,11 @@ def get_playlists_for_top3_with_llm(
             try:
                 resp = client.chat.completions.create(
                     model="gpt-4o-mini",
+                    response_format={"type": "json_object"},  # ✅ JSON 강제
                     messages=[
                         {
                             "role": "system",
-                            "content": "당신은 운동-음악 큐레이터입니다. JSON만 출력."
+                            "content": "당신은 운동-음악 큐레이터입니다. 검색용 키워드 한 개를 JSON 객체로만 출력하세요."
                         },
                         {
                             "role": "user",
@@ -299,7 +315,7 @@ if len(daily_raw) < 2:
     st.stop()
 
 daily_df = pd.DataFrame(daily_raw[1:], columns=daily_raw[0])
-users_df = load_users_df()   # ✅ 이제 항상 최신 users 시트를 읽음
+users_df = load_users_df()   # ✅ 항상 최신 users 시트를 읽음
 
 daily_df["날짜"] = pd.to_datetime(daily_df["날짜"], errors="coerce").dt.date
 
@@ -366,7 +382,43 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
         for _, r in candidates.iterrows()
     ]
 
-    system_prompt = """(생략: 기존 프롬프트 그대로 사용)"""
+    # ===================== 시스템 프롬프트 (예시) =====================
+    system_prompt = """
+당신은 개인 맞춤 운동 추천 엔진입니다.
+
+입력으로 사용자 프로필(user_profile)과 룰 기반 후보 운동(rule_candidates)이 주어집니다.
+이 정보를 바탕으로 오늘 사용자에게 가장 적합한 운동 3가지를 선택하고, 각 운동에 대한 추천 이유를 작성하세요.
+
+출력 형식은 반드시 아래 JSON 하나의 객체만 사용해야 합니다.
+설명 문장, 마크다운, 코드블록 없이 JSON만 출력하세요.
+
+{
+  "top3": [
+    {
+      "rank": 1,
+      "운동명": "운동 이름",
+      "이유": "사용자 정적 정보, 오늘 컨디션, 날씨, 운동 목적/강도 등을 종합한 이유를 한국어로 자연스럽게 작성"
+    },
+    {
+      "rank": 2,
+      "운동명": "운동 이름",
+      "이유": "..."
+    },
+    {
+      "rank": 3,
+      "운동명": "운동 이름",
+      "이유": "..."
+    }
+  ]
+}
+
+규칙:
+- 반드시 3개만 추천합니다.
+- "운동명"은 rule_candidates 안에 존재하는 운동명만 사용합니다.
+- "rank"는 1, 2, 3의 정수로 지정합니다.
+- "이유"는 2~4문장 정도로, 너무 길지 않게 작성합니다.
+    """
+    # ===============================================================
 
     payload = {
         "user_profile": user_profile,
@@ -376,6 +428,7 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     with st.spinner("추천 생성 중..."):
         resp = client.chat.completions.create(
             model="gpt-4o",
+            response_format={"type": "json_object"},  # ✅ JSON 강제
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
@@ -387,7 +440,14 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
         )
 
         raw = resp.choices[0].message.content
-        top3 = parse_json(raw)["top3"]
+        parsed = parse_json(raw)
+
+        if "top3" not in parsed:
+            st.error("❌ LLM 응답에 'top3' 키가 없습니다. 프롬프트를 확인하세요.")
+            st.code(raw)
+            st.stop()
+
+        top3 = parsed["top3"]
 
     headers = daily_raw[0]
 
@@ -404,6 +464,7 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     c_r2 = col_idx("추천이유2")
     c_r3 = col_idx("추천이유3")
 
+    # Google Sheets 업데이트
     ws_daily.update_cell(sheet_row, c_w1, top3[0]["운동명"])
     ws_daily.update_cell(sheet_row, c_w2, top3[1]["운동명"])
     ws_daily.update_cell(sheet_row, c_w3, top3[2]["운동명"])
@@ -411,15 +472,18 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     ws_daily.update_cell(sheet_row, c_r2, top3[1]["이유"])
     ws_daily.update_cell(sheet_row, c_r3, top3[2]["이유"])
 
+    # daily 캐시 클리어
     load_daily_raw.clear()
 
     st.success("🎉 daily 시트 저장 완료!")
 
+    # 화면 표시
     st.markdown("## 🏅 추천 Top3")
     for item in top3:
         st.write(f"### #{item['rank']} {item['운동명']}")
         st.write(item["이유"])
 
+    # ========================= Spotify 연동 =========================
     sp = get_spotify_client()
     workout_playlist_pairs = get_playlists_for_top3_with_llm(
         sp, top3, daily_row,
