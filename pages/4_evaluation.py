@@ -12,10 +12,13 @@ def get_spreadsheet():
     """MoodFit 스프레드시트 객체를 캐시해서 재사용"""
     return connect_gsheet("MoodFit")
 
+@st.cache_data
 def load_daily_rows():
     """
-    daily 시트의 전체 데이터를 매번 새로 가져오기.
-    👉 평가 페이지에서는 방금 저장한 사용자도 바로 보여야 해서 캐시를 사용하지 않음.
+    daily 시트의 전체 데이터를 캐시해서 가져오기.
+    - 이 페이지에 처음 들어오면 1번만 구글시트 호출
+    - 이후 rerun 시에는 캐시에서 재사용 → 호출 최소화
+    - daily 시트가 다른 페이지에서 변경되면, 이 페이지를 새로 열면 최신 데이터가 로드됨.
     """
     sh = get_spreadsheet()
     ws_daily = sh.worksheet("daily")
