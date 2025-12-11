@@ -2,6 +2,27 @@ import streamlit as st
 import pandas as pd
 from sheets_auth import connect_gsheet
 
+sh = get_spreadsheet()
+st.write("📄 Spreadsheet URL:", sh.url)
+st.write("📑 Worksheets:", [ws.title for ws in sh.worksheets()])
+
+# daily 시트 최근 3줄 찍어보기
+try:
+    ws_daily = sh.worksheet("daily")
+    daily_rows = ws_daily.get_all_values()
+    st.write("🧪 daily 마지막 3줄:", daily_rows[-3:])
+except Exception as e:
+    st.write("daily 시트 접근 에러:", e)
+
+# users 시트도 확인
+try:
+    ws_users = sh.worksheet("users")
+    users_rows = ws_users.get_all_values()
+    st.write("🧪 users 전체:", users_rows)
+except Exception as e:
+    st.write("users 시트 접근 에러:", e)
+
+
 # 페이지 기본 설정
 st.set_page_config(
     page_title="회원 등록",
