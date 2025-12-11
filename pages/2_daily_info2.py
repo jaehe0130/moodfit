@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -29,49 +30,47 @@ def get_spreadsheet():
     """MoodFit 스프레드시트 객체 캐시"""
     return connect_gsheet("MoodFit")
 
-@st.cache_data
 def load_users():
     """
-    회원 이름 목록을 캐시해서 재사용.
+    회원 이름 목록을 항상 '최신 상태'로 가져오기.
 
-    - 1순위: 'users' 시트의 A열
-    - 2순위: 'sheet1' (회원 등록을 거기에 저장했을 수도 있는 경우)
-    - 헤더가 있을 수도, 없을 수도 있다고 보고 둘 다 처리
+    - 우선 'users' 시트 사용
+    - 없으면 sheet1 사용 (이전 코드에서 sheet1에 저장했을 수도 있으니까)
+    - A열에서 이름만 추출
+    - 1행에 '이름' 같은 헤더가 있어도 자동으로 제외
     """
     sh = get_spreadsheet()
 
     ws_user = None
 
-    # 1) users 시트가 있으면 우선 사용
+    # 1) users 시트 우선
     try:
         ws_user = sh.worksheet("users")
     except Exception:
         pass
 
-    # 2) users 시트가 없다면 sheet1 사용
+    # 2) 없으면 sheet1 fallback
     if ws_user is None:
         try:
             ws_user = sh.sheet1
         except Exception:
             return []
 
-    raw = ws_user.col_values(1)  # A열 전체
-    if not raw:
+    col_values = ws_user.col_values(1)  # A열 전체
+    if not col_values:
         return []
 
     # 공백 제거 + 빈 값 제거
-    names = [n.strip() for n in raw if n and n.strip()]
+    cleaned = [v.strip() for v in col_values if v and v.strip()]
 
-    # 첫 번째 값이 헤더(이름, name 등)라면 제거
-    if names and names[0] in ("이름", "name", "Name", "NAME"):
-        names = names[1:]
+    # 첫 값이 헤더라면 제거
+    if cleaned and cleaned[0] in ("이름", "name", "Name", "NAME"):
+        cleaned = cleaned[1:]
 
-    # 중복 제거 후 정렬
-    names = sorted(list(set(names)))
+    # 중복 제거 + 정렬
+    return sorted(set(cleaned))
 
-    return names
-
-# 스프레드시트 & daily 시트 (이건 네트워크 호출 아님, 객체 재사용)
+# 스프레드시트 & daily 시트 (객체 재사용)
 sh = get_spreadsheet()
 ws = sh.worksheet("daily")  # ▶️ daily 시트로 저장 (미리 만들어두기)
 
@@ -80,7 +79,6 @@ ws = sh.worksheet("daily")  # ▶️ daily 시트로 저장 (미리 만들어두
 # =========================
 selected_date = st.date_input("📅 오늘 날짜", value=date.today())
 
-# ✅ 여기서 한 번만 load_users() 호출 → 이후에는 캐시에서 가져옴
 users = load_users()
 if not users:
     st.error("❌ 등록된 회원이 없습니다. 먼저 '회원 등록' 페이지에서 사용자를 추가해주세요.")
