@@ -29,24 +29,26 @@ def get_spreadsheet():
     """MoodFit 스프레드시트 객체 캐시"""
     return connect_gsheet("MoodFit")
 
+@st.cache_data
 def load_users():
     """
-    회원 이름 목록을 항상 최신으로 가져오기.
+    회원 이름 목록을 캐시해서 재사용.
     - 스프레드시트의 'users' 시트 사용
     - A열(첫 번째 열)에 '이름' 헤더 + 데이터가 있다고 가정
     """
     sh = get_spreadsheet()
-    ws_user = sh.worksheet("users")  # ▶️ 회원 정보 시트 이름 명시
+    ws_user = sh.worksheet("users")  # ▶️ 회원 정보 시트
 
-    names = ws_user.col_values(1)  # A열
+    names = ws_user.col_values(1)  # A열 전체
 
     # 예: ["이름", "홍길동", "김지우", ...]
     if len(names) <= 1:
         return []
 
-    return names[1:]  # 헤더("이름") 제외하고 실제 이름만 반환
+    # 헤더("이름") 제외하고 실제 이름만 반환
+    return names[1:]
 
-# 스프레드시트 & daily 시트
+# 스프레드시트 & daily 시트 (이건 네트워크 호출 아님, 객체 재사용)
 sh = get_spreadsheet()
 ws = sh.worksheet("daily")  # ▶️ daily 시트로 저장 (미리 만들어두기)
 
@@ -55,6 +57,7 @@ ws = sh.worksheet("daily")  # ▶️ daily 시트로 저장 (미리 만들어두
 # =========================
 selected_date = st.date_input("📅 오늘 날짜", value=date.today())
 
+# ✅ 여기서 한 번만 load_users() 호출 → 이후에는 캐시에서 가져옴
 users = load_users()
 if not users:
     st.error("❌ 등록된 회원이 없습니다. 먼저 '회원 등록' 페이지에서 사용자를 추가해주세요.")
@@ -87,7 +90,6 @@ purpose = st.radio(
 
 exercise_place = st.selectbox("운동 장소", ["실내(집)", "실내(헬스장)", "야외(공원)", "기타"])
 equip = st.multiselect("보유 장비", ["요가매트", "덤벨", "밴드", "폼롤러", "점프 로프", "푸쉬업바"])
-equip_str = ", ".join(equip) if equip else "없음"
 
 avg_score = compute_avg_arousal(emotions)
 
@@ -95,6 +97,8 @@ avg_score = compute_avg_arousal(emotions)
 # 💾 저장 버튼
 # =========================
 if st.button("💾 저장하고 추천 받기", use_container_width=True):
+    equip_str = ", ".join(equip) if equip else "없음"
+
     ws.append_row([
         str(selected_date),      # 날짜
         user_name,               # 이름
