@@ -59,11 +59,15 @@ def split_tags(x):
 
 def load_workouts():
     df = read_csv(WORKOUT_CSV)
-    if "운동목적" not in df.columns:
-        st.error("❌ workout.csv 에 '운동목적' 컬럼이 없습니다.")
-        st.stop()
-    df["운동목적_list"] = df["운동목적"].apply(split_tags)
+
+    # 목적은 이제 1차 필터에서 사용 X (프롬프트에서만 활용할 수 있으니, 있으면만 처리)
+    if "운동목적" in df.columns:
+        df["운동목적_list"] = df["운동목적"].apply(split_tags)
+    else:
+        df["운동목적_list"] = [[] for _ in range(len(df))]
+
     return df
+
 
 
 workouts_df = load_workouts()
@@ -143,11 +147,74 @@ def load_users_df():
     return pd.DataFrame(ws_users.get_all_records())
 
 
-# ========================= 감정 추출 함수 =========================
-def get_emotion_from_daily(row):
+# ========================= 감정 각성도 사전 =========================
+EMOTION_AROUSAL = {
+    # 🟢 쾌 + 낮은 각성
+    "편안함": 2, "차분함": 2, "평온": 2, "안정감": 2, "만족": 2, "안도": 2,
+    # 🟡 쾌 + 높은 각성
+    "기쁨": 4, "행복": 3, "즐거움": 4, "신남": 5, "열정적임": 5, "활기참": 5, "환희": 5,
+    # 🔴 불쾌 + 높은 각성
+    "긴장": 4, "불안": 4, "초조": 4, "짜증": 4, "스트레스": 4, "공포": 5, "분노": 5,
+    # 🔵 불쾌 + 낮은 각성
+    "슬픔": 1, "우울": 1, "피곤": 1, "지침": 1, "무기력": 1, "침울함": 1, "외로움": 2,
+}
+
+def get_emotions_from_daily(row):
+    """daily row에서 감정(최대 3개)을 리스트로 뽑기"""
     for col in ["감정", "대표감정", "주요감정", "감정_리스트"]:
         if col in row and pd.notna(row[col]):
-            return str(row[col]).split(",")[0].strip()
+            s = str(row[col]).strip()
+            if not s:
+                continue
+            # 예: "슬픔, 우울, 외로움"
+            return [e.strip() for e in s.split(",") if e.strip()]
+    return []
+
+def compute_avg_arousal(daily_row):
+    """
+    우선순위:
+    1) daily에 감정_평균각성점수가 있으면 그걸 사용
+    2) 없으면 감정 리스트로 평균 계산 (1~3개)
+    3) 둘 다 없으면 기본 3.0
+    """
+    # 1) 시트에 이미 평균각성점수가 있으면 우선 사용
+    for col in ["감정_평균각성점수", "감정평균각성점수", "평균각성점수"]:
+        if col in daily_row and pd.notna(daily_row[col]):
+            try:
+                v = float(str(daily_row[col]).strip())
+                if 1.0 <= v <= 5.0:
+                    return v
+            except Exception:
+                pass
+
+    # 2) 감정 리스트로 계산
+    emos = get_emotions_from_daily(daily_row)
+    scores = [EMOTION_AROUSAL.get(e) for e in emos if EMOTION_AROUSAL.get(e) is not None]
+    if scores:
+        return sum(scores) / len(scores)
+
+    # 3) fallback
+    return 3.0
+
+def arousal_to_intensity(avg_arousal: float) -> str:
+    """평균각성(1~5) -> 저/중/고강도"""
+    if avg_arousal < 2.5:
+        return "저강도"
+    elif avg_arousal < 3.5:
+        return "중강도"
+    else:
+        return "고강도"
+
+def get_intensity_column(df: pd.DataFrame) -> str:
+    """
+    workout.csv에서 강도 컬럼명을 자동 선택
+    - 우선: 운동에너지소비량기준
+    - 대체: 운동강도
+    """
+    if "운동에너지소비량기준" in df.columns:
+        return "운동에너지소비량기준"
+    if "운동강도" in df.columns:
+        return "운동강도"
     return ""
 
 
@@ -358,21 +425,31 @@ place_pref = daily_row.get("운동장소", "상관없음")
 equip_raw = daily_row.get("보유장비", "")
 equip_list = [s.strip() for s in str(equip_raw).split(",") if s.strip()]
 
-# ========================= RULE 후보군 (운동목적 기반 1차 필터) =========================
-# ✅ 핵심: 사용자가 오늘 선택한 "운동목적"을 기준으로 workout.csv에서 1차 후보 생성
-purpose = str(daily_row.get("운동목적", "")).strip()
+# ========================= RULE 후보군 (감정 평균각성점수 기반 1차 필터) =========================
+avg_arousal = compute_avg_arousal(daily_row)
+user_intensity = arousal_to_intensity(avg_arousal)
 
-if purpose:
-    # 운동목적_list 안에 해당 목적이 포함된 운동만 후보
-    candidates = workouts_df[workouts_df["운동목적_list"].apply(lambda x: purpose in x)]
-    # 만약 목적에 맞는 운동이 하나도 없으면, 전체 운동을 후보로 사용
-    if candidates.empty:
-        candidates = workouts_df.copy()
-else:
-    # 운동목적이 비어 있으면 전체 운동을 후보로 사용
+intensity_col = get_intensity_column(workouts_df)
+if not intensity_col:
+    st.error("❌ workout.csv에 강도 컬럼이 없습니다. '운동에너지소비량기준' 또는 '운동강도' 컬럼이 필요합니다.")
+    st.stop()
+
+# 1차 후보군: 강도 일치 운동만
+candidates = workouts_df[
+    workouts_df[intensity_col].astype(str).str.strip() == user_intensity
+].copy()
+
+# 후보가 아예 없으면 전체 fallback (라벨 불일치/데이터 부족 대비)
+if candidates.empty:
     candidates = workouts_df.copy()
 
+# (선택) 화면 디버깅 출력
+st.write("🧠 평균 각성 점수:", round(avg_arousal, 2))
+st.write("🔥 1차 필터 강도:", user_intensity)
+st.write("🏋️ 1차 후보 수:", len(candidates))
+
 st.markdown("---")
+
 
 # ========================= Top3 추천 생성 =========================
 if st.button("🤖 Top3 추천 받기", use_container_width=True):
@@ -391,16 +468,18 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
         temp=temp,
     )
 
-    # 1차로 필터링된 후보군만 LLM에 전달
-    # workout.csv에 매핑된 운동강도도 같이 넘겨줌
-    rule_candidates = [
-        {
-            "운동명": r["운동명"],
-            "운동목적": r.get("운동목적", ""),
-            "운동강도": r.get("운동강도", ""),
-        }
-        for _, r in candidates.iterrows()
-    ]
+# 1차로 필터링된 후보군만 LLM에 전달
+# 강도 컬럼명이 '운동에너지소비량기준'이든 '운동강도'든 -> 키는 '운동강도'로 통일
+intensity_col = get_intensity_column(workouts_df)
+
+rule_candidates = [
+    {
+        "운동명": r.get("운동명", ""),
+        "운동목적": r.get("운동목적", ""),  # 프롬프트에서 쓰고 싶으면 유지 (없으면 "")
+        "운동강도": r.get(intensity_col, "") if intensity_col else "",
+    }
+    for _, r in candidates.iterrows()
+]
 
     # ===================== 시스템 프롬프트 =====================
     system_prompt = """
@@ -525,16 +604,19 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
             st.stop()
 
         top3 = parsed["top3"]
+        
+# workout.csv에서 운동명 → 운동강도(=강도 컬럼) 매핑해서 top3에 붙여줌
+intensity_col = get_intensity_column(workouts_df)
+if intensity_col and "운동명" in workouts_df.columns:
+    intensity_map = workouts_df.set_index("운동명")[intensity_col].to_dict()
+    for item in top3:
+        wname = item.get("운동명", "")
+        item["운동강도"] = intensity_map.get(wname, "")
+else:
+    for item in top3:
+        item["운동강도"] = ""
 
-    # workout.csv에서 운동명 → 운동강도 매핑해서 top3에 붙여줌 (Spotify LLM에서 쓰기 위함)
-    if "운동강도" in workouts_df.columns:
-        intensity_map = workouts_df.set_index("운동명")["운동강도"].to_dict()
-        for item in top3:
-            wname = item.get("운동명", "")
-            item["운동강도"] = intensity_map.get(wname, "")
-    else:
-        for item in top3:
-            item["운동강도"] = ""
+   
 
     headers = daily_raw[0]
 
