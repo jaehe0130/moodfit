@@ -184,10 +184,10 @@ def infer_target_intensity_from_arousal(arousal_score):
         return None
 
     # 흔한 스케일: 1~5 또는 0~5를 가정한 기본 컷
-    # 낮음: 2.0 이하 / 중간: 2.0~3.5 / 높음: 3.5 초과
-    if a <= 2.0:
+    # 낮음: 2.5 이하 / 중간: 2.5~3.5 / 높음: 3.5이상
+    if a <= 2.5:
         return "저강도"
-    elif a <= 3.5:
+    elif a < 3.5:
         return "중강도"
     else:
         return "고강도"
