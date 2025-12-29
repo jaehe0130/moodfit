@@ -406,11 +406,6 @@ if candidates.empty:
 # 사용자 운동목적 (이제 "후보군 필터"가 아니라 "프롬프트 우선순위"에 강하게 반영)
 purpose = str(daily_row.get("운동목적", "")).strip()
 
-# 참고용 안내(원하시면 제거해도 됨)
-if target_intensity:
-    st.caption(f"🧠 감정_평균각성점수={arousal_score} → 1차 후보군 강도: {target_intensity}")
-else:
-    st.caption("🧠 감정_평균각성점수가 없어 강도 필터 없이 전체 후보군에서 추천합니다.")
 
 st.markdown("---")
 
