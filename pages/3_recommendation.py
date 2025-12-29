@@ -75,6 +75,7 @@ def load_workouts():
 
 workouts_df = load_workouts()
 
+st.warning("✅ RUNNING: 3_recommendation.py (DEBUG)")
 
 # ========================= 날씨 조회 =========================
 def get_weather(city):
