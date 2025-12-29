@@ -59,10 +59,17 @@ def split_tags(x):
 
 def load_workouts():
     df = read_csv(WORKOUT_CSV)
+
+    # 운동목적 리스트화
     if "운동목적" not in df.columns:
         st.error("❌ workout.csv 에 '운동목적' 컬럼이 없습니다.")
         st.stop()
     df["운동목적_list"] = df["운동목적"].apply(split_tags)
+
+    # (있으면) 운동강도 정규화
+    if "운동강도" in df.columns:
+        df["운동강도"] = df["운동강도"].astype(str).str.strip()
+
     return df
 
 
@@ -106,7 +113,6 @@ def parse_json(text: str):
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
-        # 디버깅용: 실제로 어떤 응답이 왔는지 화면에 보여주기
         try:
             st.error("⚠️ LLM JSON 파싱에 실패했습니다. 아래 원본 응답을 확인하세요.")
             st.code(text)
@@ -122,22 +128,15 @@ def get_spreadsheet():
     return connect_gsheet("MoodFit")
 
 
-# ❌ 캐시 X : 항상 최신 daily를 읽기 위해 데코레이터 제거
 def load_daily_raw():
-    """
-    daily 시트 전체 데이터를 항상 새로 읽어옴.
-    """
+    """daily 시트 전체 데이터를 항상 새로 읽어옴."""
     sh = get_spreadsheet()
     ws_daily = sh.worksheet("daily")
     return ws_daily.get_all_values()
 
 
-# 🔴 users_df는 캐시를 쓰면 새 회원이 안 보여서 캐시 제거
 def load_users_df():
-    """
-    users 시트 전체를 DataFrame으로 가져오기.
-    - 항상 최신 데이터를 보기 위해 캐시 사용 X
-    """
+    """users 시트 전체를 DataFrame으로 가져오기(항상 최신)."""
     sh = get_spreadsheet()
     ws_users = sh.worksheet("users")
     return pd.DataFrame(ws_users.get_all_records())
@@ -162,6 +161,51 @@ def build_user_profile(user_row, daily_row, weather, temp):
         },
     }
     return profile
+
+
+# ========================= (핵심 변경) 각성점수 -> 목표 운동강도 =========================
+def safe_float(x):
+    try:
+        if pd.isna(x):
+            return None
+        return float(str(x).strip())
+    except Exception:
+        return None
+
+
+def infer_target_intensity_from_arousal(arousal_score):
+    """
+    감정_평균각성점수(숫자)를 기반으로 1차 후보군(운동강도)을 정합니다.
+    - 스케일이 1~5, 0~5 등 다양한 경우를 대비해 '상대적' 기준으로 처리
+    - 값이 비정상이면 None 반환(강도 필터링 X)
+    """
+    a = safe_float(arousal_score)
+    if a is None:
+        return None
+
+    # 흔한 스케일: 1~5 또는 0~5를 가정한 기본 컷
+    # 낮음: 2.0 이하 / 중간: 2.0~3.5 / 높음: 3.5 초과
+    if a <= 2.0:
+        return "저강도"
+    elif a <= 3.5:
+        return "중강도"
+    else:
+        return "고강도"
+
+
+def filter_candidates_by_intensity(df, target_intensity):
+    """
+    workout.csv에 '운동강도'가 있을 때만 필터 적용.
+    target_intensity가 None이면 필터링하지 않음.
+    """
+    if target_intensity is None:
+        return df.copy()
+
+    if "운동강도" not in df.columns:
+        return df.copy()
+
+    filtered = df[df["운동강도"].astype(str).str.strip() == target_intensity].copy()
+    return filtered
 
 
 # ========================= Spotify 클라이언트 =========================
@@ -242,16 +286,7 @@ def search_spotify_playlists(sp, query, market="KR", limit=3):
 def get_playlists_for_top3_with_llm(
     sp, top3, daily_row, purpose, market="KR"
 ):
-    """
-    top3 각각에 대해:
-    - 운동명
-    - daily의 감정/컨디션
-    - 운동목적
-    - (workout.csv에서 가져온 운동강도: item["운동강도"])
-    를 참고해서 Spotify 검색 키워드를 LLM으로 한 번 뽑은 뒤, Spotify에서 플레이리스트 검색.
-    """
     if sp is None:
-        # Spotify 사용 불가 시, 구조만 맞춰서 빈 리스트 반환
         return [{"운동명": t["운동명"], "playlists": []} for t in top3]
 
     client = None
@@ -264,7 +299,7 @@ def get_playlists_for_top3_with_llm(
 
     for item in top3:
         wname = item["운동명"]
-        w_intensity = item.get("운동강도", "")  # workout.csv에서 매핑된 강도(있으면)
+        w_intensity = item.get("운동강도", "")
 
         query = ""
 
@@ -279,7 +314,7 @@ def get_playlists_for_top3_with_llm(
             try:
                 resp = client.chat.completions.create(
                     model="gpt-4o-mini",
-                    response_format={"type": "json_object"},  # ✅ JSON 강제
+                    response_format={"type": "json_object"},
                     messages=[
                         {
                             "role": "system",
@@ -324,7 +359,7 @@ if len(daily_raw) < 2:
     st.stop()
 
 daily_df = pd.DataFrame(daily_raw[1:], columns=daily_raw[0])
-users_df = load_users_df()   # ✅ 항상 최신 users 시트를 읽음
+users_df = load_users_df()
 
 # 👉 이름 공백 정규화 (매칭 문제 방지)
 if "이름" in daily_df.columns:
@@ -353,24 +388,29 @@ sheet_row = row_idx + 2  # 헤더 1줄 + 1-based index
 # 사용자 정적 정보 (users 시트)
 user_row = users_df[users_df["이름"] == user_name].iloc[0]
 
-# daily 시트에서 운동장소/보유장비 사용 (현재는 룰 후보 필터링에는 사용 X, 이후 확장용)
+# daily 시트에서 운동장소/보유장비
 place_pref = daily_row.get("운동장소", "상관없음")
 equip_raw = daily_row.get("보유장비", "")
 equip_list = [s.strip() for s in str(equip_raw).split(",") if s.strip()]
 
-# ========================= RULE 후보군 (운동목적 기반 1차 필터) =========================
-# ✅ 핵심: 사용자가 오늘 선택한 "운동목적"을 기준으로 workout.csv에서 1차 후보 생성
+# ========================= (핵심 변경) 1차 후보군: 각성점수 -> 운동강도 필터 =========================
+arousal_score = daily_row.get("감정_평균각성점수", None)
+target_intensity = infer_target_intensity_from_arousal(arousal_score)
+
+candidates = filter_candidates_by_intensity(workouts_df, target_intensity)
+
+# 강도 필터 결과가 너무 비거나, 강도 컬럼이 없거나, 어떤 이유로든 후보가 0이면 전체로 백업
+if candidates.empty:
+    candidates = workouts_df.copy()
+
+# 사용자 운동목적 (이제 "후보군 필터"가 아니라 "프롬프트 우선순위"에 강하게 반영)
 purpose = str(daily_row.get("운동목적", "")).strip()
 
-if purpose:
-    # 운동목적_list 안에 해당 목적이 포함된 운동만 후보
-    candidates = workouts_df[workouts_df["운동목적_list"].apply(lambda x: purpose in x)]
-    # 만약 목적에 맞는 운동이 하나도 없으면, 전체 운동을 후보로 사용
-    if candidates.empty:
-        candidates = workouts_df.copy()
+# 참고용 안내(원하시면 제거해도 됨)
+if target_intensity:
+    st.caption(f"🧠 감정_평균각성점수={arousal_score} → 1차 후보군 강도: {target_intensity}")
 else:
-    # 운동목적이 비어 있으면 전체 운동을 후보로 사용
-    candidates = workouts_df.copy()
+    st.caption("🧠 감정_평균각성점수가 없어 강도 필터 없이 전체 후보군에서 추천합니다.")
 
 st.markdown("---")
 
@@ -391,8 +431,7 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
         temp=temp,
     )
 
-    # 1차로 필터링된 후보군만 LLM에 전달
-    # workout.csv에 매핑된 운동강도도 같이 넘겨줌
+    # 1차(각성점수 기반 운동강도)로 필터링된 후보군만 LLM에 전달
     rule_candidates = [
         {
             "운동명": r["운동명"],
@@ -402,98 +441,83 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
         for _, r in candidates.iterrows()
     ]
 
-    # ===================== 시스템 프롬프트 =====================
-    system_prompt = """
+    # ===================== (핵심 변경) 시스템 프롬프트: 운동목적 우선순위 강화 =====================
+    system_prompt = f"""
 당신은 개인 맞춤 운동 추천 엔진입니다.
 
 입력으로 다음 정보가 주어집니다.
 
 1) user_profile["정적프로필"]
 - Google Sheets의 users 시트 한 행 전체가 그대로 들어 있습니다.
-- 포함되는 컬럼은 다음과 같습니다.
+- 포함되는 컬럼:
   - 이름, 나이(만나이), 성별, 키(cm), 몸무게(kg), 평소 활동량,
     부상 여부(예/아니오), 부상 부위(허리/무릎/어깨 등 또는 해당 없음)
 
 2) user_profile["오늘컨디션"]
 - Google Sheets의 daily 시트에서 사용자가 오늘 입력한 컨디션 정보입니다.
-- 포함되는 컬럼은 다음과 같습니다.
+- 포함되는 컬럼:
   - 날짜, 이름, 감정, 감정_평균각성점수, 수면 시간, 운동 가능 시간(분),
     스트레스, 운동목적, 운동장소, 보유장비
 
 3) user_profile["환경정보"]
-- 오늘 날씨와 기온 정보입니다.
+- 오늘 날씨/기온:
   - 날씨(clear, clouds, rain 등)
-  - 기온_C(섭씨 온도)
+  - 기온_C(섭씨)
 
 4) rule_candidates
-- 이미 사용자의 "운동목적"에 맞게 1차로 필터링된 운동 목록입니다.
-- 각 항목은 다음과 같은 정보를 가집니다.
+- **이미 감정_평균각성점수를 기반으로 "운동강도"가 맞게 1차 필터링된** 운동 목록입니다.
+- 각 항목:
   - 운동명, 운동목적, 운동강도(저강도/중강도/고강도)
 
 당신의 역할:
-- 위 정보를 모두 활용하여 오늘 이 사용자에게 가장 적합한 운동 3가지를
-  rule_candidates 목록 안에서만 선택하세요.
-- 단순히 운동목적만 보지 말고 아래 기준을 모두 반영해 우선순위를 정하십시오.
+- 오늘 이 사용자에게 가장 적합한 운동 3가지를 **rule_candidates 안에서만** 선택하세요.
 
-[핵심 원칙: 감정 기반 추천 강조]
-- 무드핏은 "감정 기반 운동 추천 서비스"입니다.
-- 따라서 **감정과 감정_평균각성점수는 운동 종류와 강도 결정의 최우선 기준**입니다.
-- 감정 상태와 각성 수준이 오늘의 운동 방향(강도, 자극량, 회복 여부)을
-  가장 크게 좌우해야 합니다.
+[우선순위 규칙: 운동목적 > 그 외 요소]
+- 사용자가 오늘 선택한 운동목적(user_profile["오늘컨디션"]["운동목적"])을 **가장 우선으로** 충족해야 합니다.
+- 즉, **Top3는 가능하면 모두 운동목적에 부합하는 운동으로 구성**하세요.
+- 단, 아래 안전/현실 제약(부상/시간/장소/장비/수면/스트레스)이 크게 충돌하면
+  목적 부합도를 일부 낮추더라도 더 안전하고 실행 가능한 운동을 우선할 수 있습니다.
 
-[감정 활용 규칙]
-- 감정이 부정적이고 각성점수가 낮으면:
-  → 회복/이완/저강도 운동을 강하게 우선 추천
-- 감정이 긍정이고 각성점수가 높으면:
-  → 운동목적에 맞는 중~고강도 운동도 자연스럽게 고려
-- 무기력·에너지 저하 감정이면:
-  → 과한 부담은 피하되 기분전환 효과가 있는 가벼운 전신·순환 운동을 우선 고려
-- 긴장/불안 감정이면:
-  → 신체 긴장 완화, 호흡 안정, 스트레스 완화 목적 운동을 우선 적용
+[감정/각성점수 활용]
+- rule_candidates는 이미 각성점수 기반 강도 필터가 적용되어 있습니다.
+- 따라서 여기서는:
+  - 감정(정서적 상태) + 각성점수를 근거로 "왜 이 강도가 적절한지"를 이유에 구체적으로 설명하고,
+  - 동일 목적 내에서 '기분전환/긴장완화/에너지회복' 등 감정에 맞는 운동을 상위에 두세요.
 
 [정적 정보 활용]
-- 나이, 성별, 키/몸무게, 평소 활동량, 부상 여부/부상 부위 기반 판단:
+- 나이/성별/키/몸무게/활동량/부상 여부·부상 부위 반영:
   - 부상 부위를 악화시키는 동작은 제외하거나 순위 낮춤
-  - 활동량이 낮고 체력이 약한 경우 고강도 운동 배제
-  - 활동량이 높고 젊은 사용자라면 적절한 자극의 운동도 허용
+  - 활동량이 낮은 경우 과도한 자극은 피함
 
-[오늘 컨디션(동적 정보) 추가 활용]
-- 수면 부족 + 스트레스 높음 → 강도 자동 하향 조정(저~중강도 중심)
-- 운동 가능 시간 짧음 → 짧은 시간 내 가능한 운동 우선
-- 운동장소·보유장비가 가능한 운동만 최종 후보에 포함
-  (집 + 장비 없음 → 맨몸/매트 운동 / 헬스장 → 기구운동 허용)
+[오늘 컨디션(동적 정보)]
+- 수면 부족 + 스트레스 높음 → 강도/볼륨(부담) 자동 하향(가능 범위 내)
+- 운동 가능 시간 짧음 → 짧게 끝낼 수 있는 운동 우선
+- 운동장소/보유장비가 가능한 운동을 우선(집+장비없음→맨몸/매트 등)
 
-[환경정보 활용]
-- 비, 폭염, 한파 등 → 실내운동 우선
-- 맑고 온화한 날 → 가벼운 야외 유산소도 고려 가능
-
-[운동강도 활용]
-- 운동강도(저/중/고)를 컨디션·감정에 맞게 조정하여
-  무리 없이 성취감을 느낄 수 있는 강도를 선택
+[환경정보]
+- 비/폭염/한파 등 → 실내운동 우선
+- 맑고 온화 → 가벼운 야외 유산소 고려 가능
 
 출력 형식:
-- 반드시 아래 JSON 하나의 객체만 출력해야 합니다.
-- 설명 문장, 마크다운, 코드블록 없이 JSON만 출력하세요.
+- 반드시 아래 JSON 하나의 객체만 출력
+- 설명 문장/마크다운/코드블록 없이 JSON만 출력
 
-출력 예시:
-
-{
+{{
   "top3": [
-    {
+    {{
       "rank": 1,
       "운동명": "운동 이름",
-      "이유": "사용자의 감정, 각성점수, 수면/스트레스, 운동 가능 시간, 운동장소/장비, 부상 여부, 날씨/기온 등을 종합하여 왜 이 운동이 1순위인지 2~4문장으로 설명"
-    },
+      "이유": "운동목적을 1순위로 충족하는 근거 + 감정/각성점수 + 수면/스트레스 + 시간/장소/장비 + 부상 + 날씨를 종합해 2~4문장"
+    }},
     ...
   ]
-}
+}}
 
 규칙:
-- 반드시 3개만 추천합니다.
-- 운동명은 rule_candidates 안에 존재하는 것만 사용합니다.
-- 운동 추천 시 요가 계열(요가, 스트레칭, 필라테스 등)은 중복되지 않도록 하며, 전체 추천 결과에 2개 이하로만 포함하세요.
-- 이유는 실제 입력값(예: 감정='우울', 수면 5시간, 스트레스 3점, 장비 없음 등)을 반영해 구체적으로 작성합니다.
-- 컨디션을 과대평가하거나 과소평가하지 말고 균형 있게 판단합니다.
+- 반드시 3개만 추천
+- 운동명은 rule_candidates 안에 존재하는 것만 사용
+- 요가 계열(요가/스트레칭/필라테스 등)은 중복되지 않도록 하며, 전체 2개 이하
+- 이유는 실제 입력값(감정, 각성점수, 수면시간, 스트레스, 시간, 장소/장비 등)을 반영해 구체적으로 작성
 """
     # ===============================================================
 
@@ -505,13 +529,10 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
     with st.spinner("추천 생성 중..."):
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
-            response_format={"type": "json_object"},  # ✅ JSON 강제
+            response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": json.dumps(payload, ensure_ascii=False, default=str),
-                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
             ],
             temperature=0.6,
         )
@@ -542,7 +563,7 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
         if name not in headers:
             st.error(f"❌ daily 시트에 '{name}' 컬럼 없음")
             st.stop()
-        return headers.index(name) + 1  # 1-based
+        return headers.index(name) + 1
 
     c_w1 = col_idx("추천운동1")
     c_w2 = col_idx("추천운동2")
