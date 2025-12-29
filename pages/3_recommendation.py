@@ -504,7 +504,7 @@ if st.button("🤖 Top3 추천 받기", use_container_width=True):
 
     with st.spinner("추천 생성 중..."):
         resp = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             response_format={"type": "json_object"},  # ✅ JSON 강제
             messages=[
                 {"role": "system", "content": system_prompt},
