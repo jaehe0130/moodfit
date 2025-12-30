@@ -1,6 +1,10 @@
 import streamlit as st
 from sheets_auth import connect_gsheet
+from datetime import datetime
 
+st.write("✅ evaluation.py loaded at:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+st.write("✅ version tag:", "EVAL-2025-12-30-v1")
+st.divider()
 st.set_page_config(page_title="추천운동 평가", page_icon="📊", layout="centered")
 st.title("📊 추천운동 평가 (논문용 설문)")
 
